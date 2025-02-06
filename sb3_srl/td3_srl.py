@@ -17,10 +17,10 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.type_aliases import PyTorchObs
 from stable_baselines3.common.utils import get_parameters_by_name, polyak_update
 
-from stable_baselines3 import TD3
 from stable_baselines3.td3.policies import Actor
 from stable_baselines3.td3.policies import TD3Policy
 
+from sb3_srl.td3 import TD3
 from sb3_srl.autoencoders import instance_autoencoder
 
 
@@ -76,6 +76,7 @@ class SRLTD3(TD3):
 
     def _setup_model(self) -> None:
         super()._setup_model()
+        self.policy.ae_model.to(self.device)
         # Running mean and running var
         self.encoder_batch_norm_stats = get_parameters_by_name(self.encoder, ["running_"])
         self.encoder_batch_norm_stats_target = get_parameters_by_name(self.encoder_target, ["running_"])
