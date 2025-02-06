@@ -8,12 +8,12 @@ Created on Thu Feb  6 12:45:59 2025
 import argparse
 import numpy as np
 
-from stable_baselines3 import TD3
 from stable_baselines3.td3.policies import TD3Policy
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.noise import NormalActionNoise
 
-from sb3_srl.td3 import SRLTD3Policy, SRLTD3
+from sb3_srl.td3 import TD3
+from sb3_srl.td3_srl import SRLTD3Policy, SRLTD3
 
 from utils import parse_crazyflie_env_args
 from utils import parse_memory_args
