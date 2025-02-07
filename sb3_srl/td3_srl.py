@@ -90,6 +90,7 @@ class SRLTD3(TD3):
         actor_losses, critic_losses = [], []
         ae_losses, l2_losses = [], []
         mi_min_values, mi_var_values = [], []
+        td_errors = []
         for _ in range(gradient_steps):
             self._n_updates += 1
             # Sample replay buffer
@@ -124,13 +125,24 @@ class SRLTD3(TD3):
             critic_loss.backward()
             self.critic.optimizer.step()
 
+            # Extract Q1 and Q2 from the current_q_values tuple
+            q1, q2 = current_q_values
+    
+            # Compute the TD error for both Q-values
+            td_error_1 = target_q_values - q1.detach()
+            td_error_2 = target_q_values - q2.detach()
+    
+            # Use the minimum of the two TD errors (TD3 approach)
+            td_loss = th.mean(th.min(td_error_1 ** 2, td_error_2 ** 2))
+            td_errors.append(td_loss.item())
+
             # Compute reconstruction loss
             rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
             if latent_loss is not None:
                 l2_losses.append(latent_loss.item())
             ae_losses.append(rep_loss.item())
-            self.policy.ae_model.update_representation(rep_loss)
+            self.policy.ae_model.update_representation(rep_loss + 2 * td_loss)
 
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:
@@ -153,10 +165,6 @@ class SRLTD3(TD3):
             
             if self._n_updates % 1000 == 0:
                 # Mutual Information to assess latent features' impact
-                q_var = th.abs(current_q_values[0] - current_q_values[1])
-                mi_var = compute_mutual_information(obs_z, q_var.detach())
-                mi_var_values.append(mi_var)
-
                 q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
                 mi_min = compute_mutual_information(obs_z, q_min.detach())
                 mi_min_values.append(mi_min)
@@ -164,9 +172,10 @@ class SRLTD3(TD3):
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/critic_loss", np.mean(critic_losses))
         self.logger.record("train/ae_loss", np.mean(ae_losses))
+        self.logger.record("train/td_error", np.mean(td_errors))
+
         if len(mi_min_values) > 0:
             self.logger.record("train/mutual_information_min", np.mean(mi_min_values))
-            self.logger.record("train/mutual_information_var", np.mean(mi_var_values))
         if len(actor_losses) > 0:
             self.logger.record("train/actor_loss", np.mean(actor_losses))
         if len(l2_losses) > 0:
