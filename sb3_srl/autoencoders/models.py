@@ -74,7 +74,7 @@ class AEModel:
         """
         self.encoder.train(mode)
         self.decoder.train(mode)
-    
+
     def compute_representation_loss(self, observation, action, next_observation):
         raise NotImplementedError()
 
@@ -121,4 +121,3 @@ class VectorModel(AEModel):
         latent_loss = latent_l2_loss(obs_z)
         loss = rec_loss + latent_loss * self.decoder_latent_lambda
         return loss, [rec_loss, latent_loss]
-    

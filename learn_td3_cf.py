@@ -8,11 +8,11 @@ Created on Thu Feb  6 12:45:59 2025
 import argparse
 import numpy as np
 
+from stable_baselines3 import TD3
 from stable_baselines3.td3.policies import TD3Policy
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.noise import NormalActionNoise
 
-from sb3_srl.td3 import TD3
 from sb3_srl.td3_srl import SRLTD3Policy, SRLTD3
 
 from utils import parse_crazyflie_env_args
@@ -39,9 +39,9 @@ def parse_agent_args(parser):
                            help='Discount factor \gamma.')
     arg_agent.add_argument("--policy-freq", type=int, default=2,
                            help='Steps interval for actor batch training.')
-    arg_agent.add_argument("--policy-noise", type=list, default=[0.2, 0.2, 0.1, 0.2],
+    arg_agent.add_argument("--policy-noise", type=float, default=0.2,
                            help='Policy noise value.')
-    arg_agent.add_argument("--noise-clip", type=list, default=[0.5, 0.5, 0.3, 0.5],
+    arg_agent.add_argument("--noise-clip", type=float, default=0.5,
                            help='Policy noise clip value.')
     return arg_agent
 

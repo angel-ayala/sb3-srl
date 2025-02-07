@@ -99,8 +99,7 @@ class SRLTD3(TD3):
                 obs = self.encoder(replay_data.observations)
                 next_obs = self.encoder_target(replay_data.next_observations)
                 # Select action according to policy and add clipped noise
-                # noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
-                noise = th.randn_like(replay_data.actions) * self.target_policy_noise
+                noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
                 noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
                 next_actions = (self.actor_target(next_obs) + noise).clamp(-1, 1)
 
