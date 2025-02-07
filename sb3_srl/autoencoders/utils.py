@@ -57,5 +57,5 @@ def latent_l2_loss(latent_value):
     return latent_value
 
 def compute_mutual_information(latents, q_values):
-    mi = mutual_info_regression(latents.numpy(), q_values.numpy().reshape(-1))
+    mi = mutual_info_regression(latents.cpu().numpy(), q_values.cpu().numpy().reshape(-1))
     return mi.mean()
