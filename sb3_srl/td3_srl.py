@@ -22,6 +22,7 @@ from stable_baselines3.td3.policies import TD3Policy
 
 from sb3_srl.td3 import TD3
 from sb3_srl.autoencoders import instance_autoencoder
+from sb3_srl.autoencoders.utils import compute_mutual_information
 
 
 class SRLTD3Policy(TD3Policy):
@@ -88,6 +89,7 @@ class SRLTD3(TD3):
 
         actor_losses, critic_losses = [], []
         ae_losses, l2_losses = [], []
+        mi_min_values, mi_var_values = [], []
         for _ in range(gradient_steps):
             self._n_updates += 1
             # Sample replay buffer
@@ -111,7 +113,7 @@ class SRLTD3(TD3):
 
             # Get current Q-values estimates for each critic network
             current_q_values = self.critic(obs_z, replay_data.actions)
-
+            
             # Compute critic loss
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             assert isinstance(critic_loss, th.Tensor)
@@ -148,10 +150,23 @@ class SRLTD3(TD3):
                 polyak_update(self.critic_batch_norm_stats, self.critic_batch_norm_stats_target, 1.0)
                 polyak_update(self.actor_batch_norm_stats, self.actor_batch_norm_stats_target, 1.0)
                 polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
+            
+            if self._n_updates % 1000 == 0:
+                # Mutual Information to assess latent features' impact
+                q_var = th.abs(current_q_values[0] - current_q_values[1])
+                mi_var = compute_mutual_information(obs_z, q_var.detach())
+                mi_var_values.append(mi_var)
+
+                q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
+                mi_min = compute_mutual_information(obs_z, q_min.detach())
+                mi_min_values.append(mi_min)
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/critic_loss", np.mean(critic_losses))
         self.logger.record("train/ae_loss", np.mean(ae_losses))
+        if len(mi_min_values) > 0:
+            self.logger.record("train/mutual_information_min", np.mean(mi_min_values))
+            self.logger.record("train/mutual_information_var", np.mean(mi_var_values))
         if len(actor_losses) > 0:
             self.logger.record("train/actor_loss", np.mean(actor_losses))
         if len(l2_losses) > 0:

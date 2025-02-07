@@ -7,6 +7,7 @@ Created on Thu Feb  6 11:33:38 2025
 """
 import torch as th
 from torch.nn import functional as F
+from sklearn.feature_selection import mutual_info_regression
 
 
 def preprocess_obs(obs, bits=5):
@@ -54,3 +55,7 @@ def latent_l2_loss(latent_value):
     # see https://arxiv.org/pdf/1903.12436.pdf
     latent_value = (0.5 * latent_value.pow(2).sum(1)).mean()
     return latent_value
+
+def compute_mutual_information(latents, q_values):
+    mi = mutual_info_regression(latents.numpy(), q_values.numpy().reshape(-1))
+    return mi.mean()
