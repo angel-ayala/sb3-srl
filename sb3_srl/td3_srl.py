@@ -32,8 +32,6 @@ class SRLTD3Policy(TD3Policy):
         super(SRLTD3Policy, self).__init__(*args, **kwargs)
 
         self.make_autencoder(ae_type, ae_params)
-        self.encoder_target = copy.deepcopy(self.ae_model.encoder)
-        self.encoder_target.train(False)
 
     def make_autencoder(self, ae_type, ae_params):
         self.ae_model = instance_autoencoder(ae_type, ae_params)
@@ -72,7 +70,7 @@ class SRLTD3(TD3):
         super()._create_aliases()
         self.encoder = self.policy.ae_model.encoder
         self.decoder = self.policy.ae_model.decoder
-        self.encoder_target = self.policy.encoder_target
+        self.encoder_target = self.policy.ae_model.encoder_target
 
     def _setup_model(self) -> None:
         super()._setup_model()
@@ -96,20 +94,23 @@ class SRLTD3(TD3):
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
 
             with th.no_grad():
-                obs = self.encoder(replay_data.observations)
-                next_obs = self.encoder_target(replay_data.next_observations)
+                obs_z = self.encoder(replay_data.observations)
+                next_obs_z = self.encoder_target(replay_data.next_observations)
+                if "SPR" in self.policy.ae_model.type:
+                    obs_z = self.encoder.project(obs_z)
+                    next_obs_z = self.encoder_target.project(next_obs_z)
                 # Select action according to policy and add clipped noise
                 noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
                 noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
-                next_actions = (self.actor_target(next_obs) + noise).clamp(-1, 1)
+                next_actions = (self.actor_target(next_obs_z) + noise).clamp(-1, 1)
 
                 # Compute the next Q-values: min over all critics targets
-                next_q_values = th.cat(self.critic_target(next_obs, next_actions), dim=1)
+                next_q_values = th.cat(self.critic_target(next_obs_z, next_actions), dim=1)
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
             # Get current Q-values estimates for each critic network
-            current_q_values = self.critic(obs, replay_data.actions)
+            current_q_values = self.critic(obs_z, replay_data.actions)
 
             # Compute critic loss
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
@@ -122,17 +123,17 @@ class SRLTD3(TD3):
             self.critic.optimizer.step()
 
             # Compute reconstruction loss
-            rep_loss, [rec_loss, latent_loss] = self.policy.ae_model.compute_representation_loss(
+            rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
-            ae_losses.append(rec_loss.item())
-            l2_losses.append(latent_loss.item())
+            if latent_loss is not None:
+                l2_losses.append(latent_loss.item())
+            ae_losses.append(rep_loss.item())
             self.policy.ae_model.update_representation(rep_loss)
 
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:
-                obs = self.encoder(replay_data.observations).detach()
                 # Compute actor loss
-                actor_loss = -self.critic.q1_forward(obs, self.actor(obs)).mean()
+                actor_loss = -self.critic.q1_forward(obs_z, self.actor(obs_z)).mean()
                 actor_losses.append(actor_loss.item())
 
                 # Optimize the actor
@@ -149,8 +150,9 @@ class SRLTD3(TD3):
                 polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        if len(actor_losses) > 0:
-            self.logger.record("train/actor_loss", np.mean(actor_losses))
         self.logger.record("train/critic_loss", np.mean(critic_losses))
         self.logger.record("train/ae_loss", np.mean(ae_losses))
-        self.logger.record("train/l2_loss", np.mean(l2_losses))
+        if len(actor_losses) > 0:
+            self.logger.record("train/actor_loss", np.mean(actor_losses))
+        if len(l2_losses) > 0:
+            self.logger.record("train/l2_loss", np.mean(l2_losses))

@@ -117,12 +117,12 @@ def parse_srl_args(parser):
                          help='Whether if use the SRL loss.')
     arg_srl.add_argument("--model-vector", action='store_true',
                          help='Whether if use the Vector reconstruction model.')
+    arg_srl.add_argument("--model-vector-spr", action='store_true',
+                         help='Whether if use the VectorSPR model.')
     # arg_srl.add_argument("--model-vector-difference", action='store_true',
     #                      help='Whether if use the VectorDifference reconstruction model.')
     # arg_srl.add_argument("--model-vector-target-dist", action='store_true',
     #                      help='Whether if use the VectorTargetDist reconstruction model.')
-    # arg_srl.add_argument("--model-vector-spr", action='store_true',
-    #                      help='Whether if use the VectorSPR model.')
     # arg_srl.add_argument("--model-rgb", action='store_true',
     #                      help='Whether if use the RGB reconstruction model.')
     return arg_srl
@@ -275,12 +275,19 @@ def args2ae_config(args, env_params):
         'encoder_only': args.encoder_only,
         'decoder_latent_lambda': args.decoder_latent_lambda,
         'decoder_weight_decay': args.decoder_weight_decay
-        } 
+        }
 
     if args.model_vector:
         assert env_params['is_vector'], 'Vector model requires is_vector flag.'
         ae_models['Vector'] = model_params.copy()
         ae_models['Vector'].update({'vector_shape': env_params['vector_shape']})
+    if args.model_vector_spr:
+        assert env_params['is_vector'], 'VectorSPR model requires is_vector flag.'
+        ae_models['VectorSPR'] = model_params.copy()
+        ae_models['VectorSPR'].update({
+            'vector_shape': env_params['vector_shape'],
+            'action_shape': env_params['action_shape'],
+            })
 
     return ae_models
 
@@ -299,16 +306,16 @@ def args2logpath(args, algo):
     path_suffix = ''
     if args.is_srl:
         path_suffix += '-srl'
-    # if args.model_vector_spr:
-    #     path_suffix += '-spr'
+    if args.model_vector_spr:
+        path_suffix += '-spr'
     # if args.model_vector_target_dist:
     #     path_suffix += '-tdist'
     # if args.model_vector_difference:
     #     path_suffix += '-diff'
     exp_name = f"{algo}{path_suffix}"
-    
+
     latest_run_id = get_latest_run_id(outfolder, exp_name)
-    
+
     return outfolder, exp_name, latest_run_id
 
 def save_dict_json(dict2save, json_path):

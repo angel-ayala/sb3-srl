@@ -31,8 +31,6 @@ class SRLSACPolicy(SACPolicy):
         super(SRLSACPolicy, self).__init__(*args, **kwargs)
 
         self.make_autencoder(ae_type, ae_params)
-        self.encoder_target = copy.deepcopy(self.ae_model.encoder)
-        self.encoder_target.train(False)
 
     def make_autencoder(self, ae_type, ae_params):
         self.ae_model = instance_autoencoder(ae_type, ae_params)
@@ -70,7 +68,7 @@ class SRLSAC(SAC):
         super()._create_aliases()
         self.encoder = self.policy.ae_model.encoder
         self.decoder = self.policy.ae_model.decoder
-        self.encoder_target = self.policy.encoder_target
+        self.encoder_target = self.policy.ae_model.encoder_target
 
     def _setup_model(self) -> None:
         super()._setup_model()
@@ -101,6 +99,9 @@ class SRLSAC(SAC):
             with th.no_grad():
                 obs_z = self.encoder(replay_data.observations)
                 next_obs_z = self.encoder_target(replay_data.next_observations)
+                if "SPR" in self.policy.ae_model.type:
+                    obs_z = self.encoder.project(obs_z)
+                    next_obs_z = self.encoder_target.project(next_obs_z)
 
             # We need to sample because `log_std` may have changed between two gradient steps
             if self.use_sde:
@@ -154,12 +155,13 @@ class SRLSAC(SAC):
             self.critic.optimizer.zero_grad()
             critic_loss.backward()
             self.critic.optimizer.step()
-            
+
             # Compute reconstruction loss
-            rep_loss, [rec_loss, latent_loss] = self.policy.ae_model.compute_representation_loss(
+            rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
-            ae_losses.append(rec_loss.item())
-            l2_losses.append(latent_loss.item())
+            if latent_loss is not None:
+                l2_losses.append(latent_loss.item())
+            ae_losses.append(rep_loss.item())
             self.policy.ae_model.update_representation(rep_loss)
 
             # Compute actor loss
@@ -190,6 +192,7 @@ class SRLSAC(SAC):
         self.logger.record("train/actor_loss", np.mean(actor_losses))
         self.logger.record("train/critic_loss", np.mean(critic_losses))
         self.logger.record("train/ae_loss", np.mean(ae_losses))
-        self.logger.record("train/l2_loss", np.mean(l2_losses))
+        if len(l2_losses) > 0:
+            self.logger.record("train/l2_loss", np.mean(l2_losses))
         if len(ent_coef_losses) > 0:
             self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))

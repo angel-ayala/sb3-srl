@@ -76,7 +76,7 @@ class Conv1dMLP(MLP):
 
 
 class VectorEncoder(Conv1dMLP):
-    def __init__(self, 
+    def __init__(self,
                  vector_shape: tuple,
                  latent_dim: int,
                  hidden_dim: int,
@@ -102,7 +102,7 @@ class VectorEncoder(Conv1dMLP):
 
 
 class VectorDecoder(MLP):
-    def __init__(self, 
+    def __init__(self,
                  vector_shape: tuple,
                  latent_dim: int,
                  hidden_dim: int,
@@ -122,3 +122,59 @@ class VectorDecoder(MLP):
             h = h.unsqueeze(2)
         out = last_layer(h)
         return out
+
+
+class VectorSPREncoder(VectorEncoder):
+    def __init__(self,
+                 vector_shape: tuple,
+                 latent_dim: int,
+                 hidden_dim: int,
+                 num_layers: int = 2):
+        super(VectorSPREncoder, self).__init__(
+            vector_shape, latent_dim, hidden_dim, num_layers)
+        self.prj = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, latent_dim),
+            )
+
+    def project(self, z):
+        h_fc = self.prj(z)
+        return h_fc
+
+
+class VectorSPRDecoder(nn.Module):
+    """VectorSPRDecoder for reconstruction function."""
+    def __init__(self,
+                 action_shape: tuple,
+                 latent_dim: int,
+                 hidden_dim: int,
+                 num_layers: int = 2):
+        super(VectorSPRDecoder, self).__init__()
+        self.tran = nn.Sequential(
+            nn.Linear(latent_dim + action_shape[-1], hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, latent_dim),
+            )
+        self.pred = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, latent_dim),
+            )
+
+    def transition(self, z, action):
+        h_fc = self.tran(th.cat([z, action], dim=1))
+        return h_fc
+
+    def predict(self, z_prj):
+        h_fc = self.pred(z_prj)
+        return h_fc
+
+    def forward(self, z):
+        return self.predict(z)
