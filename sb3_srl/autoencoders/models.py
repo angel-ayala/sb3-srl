@@ -48,6 +48,8 @@ class AEModel:
     def to(self, device):
         self.encoder.to(device)
         self.decoder.to(device)
+        if hasattr(self, 'encoder_target'):
+            self.encoder_target.to(device)
 
     def encoder_optim_zero_grad(self):
         self.encoder_optim.zero_grad()
