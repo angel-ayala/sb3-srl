@@ -47,13 +47,13 @@ def obs_reconstruction_loss(true_obs, rec_obs):
 
     output_obs = rec_obs.reshape(true_obs.shape)
 
-    return F.mse_loss(output_obs, true_obs)
+    return F.mse_loss(output_obs, true_obs, reduction='none').mean(1)
 
 
 def latent_l2_loss(latent_value):
     # add L2 penalty on latent representation
     # see https://arxiv.org/pdf/1903.12436.pdf
-    latent_value = (0.5 * latent_value.pow(2).sum(1)).mean()
+    latent_value = 0.5 * latent_value.pow(2).sum(1)
     return latent_value
 
 def compute_mutual_information(latents, q_values):

@@ -10,6 +10,7 @@ import copy
 import numpy as np
 import torch as th
 from torch.nn import functional as F
+from sklearn.preprocessing import MinMaxScaler
 
 from stable_baselines3.common.policies import ContinuousCritic
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -62,6 +63,9 @@ class SRLSACPolicy(SACPolicy):
 
 class SRLSAC(SAC):
     def __init__(self, *args, **kwargs):
+        self.scaler = MinMaxScaler()
+        self.scaler.fit([args[1].observation_space.low,
+                         args[1].observation_space.high])
         super(SRLSAC, self).__init__(*args, **kwargs)
 
     def _create_aliases(self) -> None:
@@ -69,6 +73,7 @@ class SRLSAC(SAC):
         self.encoder = self.policy.ae_model.encoder
         self.decoder = self.policy.ae_model.decoder
         self.encoder_target = self.policy.ae_model.encoder_target
+        self.policy.ae_model.preprocess = self.scaler.transform
 
     def _setup_model(self) -> None:
         super()._setup_model()
@@ -159,8 +164,9 @@ class SRLSAC(SAC):
             # Compute reconstruction loss
             rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
+            rep_loss = rep_loss.mean()
             if latent_loss is not None:
-                l2_losses.append(latent_loss.item())
+                l2_losses.append(latent_loss.mean().item())
             ae_losses.append(rep_loss.item())
             self.policy.ae_model.update_representation(rep_loss)
 

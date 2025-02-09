@@ -7,10 +7,10 @@ Created on Thu Feb  6 11:05:01 2025
 """
 from typing import Optional
 
-import copy
 import numpy as np
 import torch as th
 from torch.nn import functional as F
+from sklearn.preprocessing import MinMaxScaler
 
 from stable_baselines3.common.policies import ContinuousCritic
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -65,6 +65,9 @@ class SRLTD3Policy(TD3Policy):
 
 class SRLTD3(TD3):
     def __init__(self, *args, **kwargs):
+        self.scaler = MinMaxScaler()
+        self.scaler.fit([args[1].observation_space.low,
+                         args[1].observation_space.high])
         super(SRLTD3, self).__init__(*args, **kwargs)
 
     def _create_aliases(self) -> None:
@@ -72,6 +75,7 @@ class SRLTD3(TD3):
         self.encoder = self.policy.ae_model.encoder
         self.decoder = self.policy.ae_model.decoder
         self.encoder_target = self.policy.ae_model.encoder_target
+        self.policy.ae_model.preprocess = self.scaler.transform
 
     def _setup_model(self) -> None:
         super()._setup_model()
@@ -88,8 +92,8 @@ class SRLTD3(TD3):
         self._update_learning_rate([self.actor.optimizer, self.critic.optimizer])
 
         actor_losses, critic_losses = [], []
-        ae_losses, l2_losses = [], []
-        mi_min_values, mi_var_values = [], []
+        ae_losses, l2_losses, trep_losses = [], [], []
+        mi_min_values = []
         td_errors = []
         for _ in range(gradient_steps):
             self._n_updates += 1
@@ -114,7 +118,7 @@ class SRLTD3(TD3):
 
             # Get current Q-values estimates for each critic network
             current_q_values = self.critic(obs_z, replay_data.actions)
-            
+
             # Compute critic loss
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             assert isinstance(critic_loss, th.Tensor)
@@ -125,24 +129,13 @@ class SRLTD3(TD3):
             critic_loss.backward()
             self.critic.optimizer.step()
 
-            # Extract Q1 and Q2 from the current_q_values tuple
-            q1, q2 = current_q_values
-    
-            # Compute the TD error for both Q-values
-            td_error_1 = target_q_values - q1.detach()
-            td_error_2 = target_q_values - q2.detach()
-    
-            # Use the minimum of the two TD errors (TD3 approach)
-            td_loss = th.mean(th.min(td_error_1 ** 2, td_error_2 ** 2))
-            td_errors.append(td_loss.item())
-
             # Compute reconstruction loss
             rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
             if latent_loss is not None:
-                l2_losses.append(latent_loss.item())
-            ae_losses.append(rep_loss.item())
-            self.policy.ae_model.update_representation(rep_loss + 2 * td_loss)
+                l2_losses.append(latent_loss.mean().item())
+            ae_losses.append(rep_loss.mean().item())
+            self.policy.ae_model.update_representation(rep_loss.mean())
 
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:
@@ -162,7 +155,7 @@ class SRLTD3(TD3):
                 polyak_update(self.critic_batch_norm_stats, self.critic_batch_norm_stats_target, 1.0)
                 polyak_update(self.actor_batch_norm_stats, self.actor_batch_norm_stats_target, 1.0)
                 polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
-            
+
             if self._n_updates % 1000 == 0:
                 # Mutual Information to assess latent features' impact
                 q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
@@ -172,7 +165,6 @@ class SRLTD3(TD3):
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/critic_loss", np.mean(critic_losses))
         self.logger.record("train/ae_loss", np.mean(ae_losses))
-        self.logger.record("train/td_error", np.mean(td_errors))
 
         if len(mi_min_values) > 0:
             self.logger.record("train/mutual_information_min", np.mean(mi_min_values))

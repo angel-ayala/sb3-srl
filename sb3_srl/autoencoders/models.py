@@ -27,6 +27,7 @@ class AEModel:
         self.encoder = None
         self.decoder = None
         self.n_calls = 0
+        self.preprocess = None
 
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
@@ -126,7 +127,9 @@ class VectorModel(AEModel):
         # Compute reconstruction loss
         obs_z = self.encoder(observations)
         rec_obs = self.decoder(obs_z)
-        rec_loss = obs_reconstruction_loss(rec_obs, observations)
+        # reconstruct normalized observation
+        obs_norm = th.FloatTensor(self.preprocess(observations))
+        rec_loss = obs_reconstruction_loss(rec_obs, obs_norm)
         # add L2 penalty on latent representation
         latent_loss = latent_l2_loss(obs_z)
         loss = rec_loss + latent_loss * self.decoder_latent_lambda
