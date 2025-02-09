@@ -119,10 +119,10 @@ def parse_srl_args(parser):
                          help='Whether if use the Vector reconstruction model.')
     arg_srl.add_argument("--model-vector-spr", action='store_true',
                          help='Whether if use the VectorSPR model.')
+    arg_srl.add_argument("--model-vector-target-dist", action='store_true',
+                         help='Whether if use the VectorTargetDist reconstruction model.')
     # arg_srl.add_argument("--model-vector-difference", action='store_true',
     #                      help='Whether if use the VectorDifference reconstruction model.')
-    # arg_srl.add_argument("--model-vector-target-dist", action='store_true',
-    #                      help='Whether if use the VectorTargetDist reconstruction model.')
     # arg_srl.add_argument("--model-rgb", action='store_true',
     #                      help='Whether if use the RGB reconstruction model.')
     return arg_srl
@@ -288,6 +288,11 @@ def args2ae_config(args, env_params):
             'vector_shape': env_params['vector_shape'],
             'action_shape': env_params['action_shape'],
             })
+    if args.model_vector_target_dist:
+        assert env_params['is_vector'], 'Vector model requires is_vector flag.'
+        ae_models['VectorTargetDist'] = model_params.copy()
+        ae_models['VectorTargetDist'].update({
+            'vector_shape': env_params['vector_shape']})
 
     return ae_models
 

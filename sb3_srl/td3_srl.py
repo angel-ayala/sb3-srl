@@ -94,7 +94,6 @@ class SRLTD3(TD3):
         actor_losses, critic_losses = [], []
         ae_losses, l2_losses = [], []
         mi_min_values = []
-        td_errors = []
         for _ in range(gradient_steps):
             self._n_updates += 1
             # Sample replay buffer

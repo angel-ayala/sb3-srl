@@ -16,6 +16,8 @@ from .net import VectorSPREncoder
 from .net import VectorSPRDecoder
 from .utils import obs_reconstruction_loss
 from .utils import latent_l2_loss
+from .utils import dist2orientation_diff
+from .utils import target_pos2dist
 
 
 class AEModel:
@@ -185,3 +187,38 @@ class VectorSPRModel(AEModel):
             y_curl = self.encoder_target.project(z_t1)
         loss = self.compute_regression_loss(y_curl, y_hat)
         return loss, None
+
+
+class VectorTargetDistModel(VectorModel):
+    def __init__(self,
+                 vector_shape: tuple,
+                 latent_dim: int = 50,
+                 hidden_dim: int = 256,
+                 num_layers: int = 2,
+                 encoder_only: bool = False,
+                 decoder_latent_lambda: float = 1e-6):
+        super(VectorTargetDistModel, self).__init__(
+            vector_shape,
+            latent_dim=latent_dim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            encoder_only=encoder_only,
+            decoder_latent_lambda=decoder_latent_lambda)
+        self.type = 'VectorTargetDist'
+
+    def compute_representation_loss(self, observations, actions, next_observations):
+        # Compute reconstruction loss
+        obs_z = self.encoder(observations)
+        rec_obs = self.decoder(obs_z)
+        # reconstruct target distance
+        obs_norm = observations.cpu().clone()  # clone to allows inplace modification
+        obs_norm[:, 13:] = target_pos2dist(observations)
+        obs_ori = dist2orientation_diff(obs_norm)
+        obs_norm = th.FloatTensor(self.preprocess(obs_norm))
+        obs_norm[:, 12] = (obs_ori + 1) / 2.
+        obs_norm = obs_norm.to(rec_obs.device)        
+        rec_loss = obs_reconstruction_loss(rec_obs, obs_norm)
+        # add L2 penalty on latent representation
+        latent_loss = latent_l2_loss(obs_z)
+        loss = rec_loss + latent_loss * self.decoder_latent_lambda
+        return loss, latent_loss

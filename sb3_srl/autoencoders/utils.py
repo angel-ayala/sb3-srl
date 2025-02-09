@@ -56,6 +56,36 @@ def latent_l2_loss(latent_value):
     latent_value = 0.5 * latent_value.pow(2).sum(1)
     return latent_value
 
+
 def compute_mutual_information(latents, q_values):
-    mi = mutual_info_regression(latents.cpu().numpy(), q_values.cpu().numpy().reshape(-1))
+    mi = mutual_info_regression(
+        latents.cpu().numpy(), q_values.cpu().numpy().reshape(-1))
     return mi.mean()
+
+
+def target_pos2dist(obs_1d):
+    # replace target_pos by target_dist
+    if obs_1d.dim() == 3:
+        pos_uav = obs_1d[:, :, 6:9]
+        pos_target = obs_1d[:, :, -3:]
+    elif obs_1d.dim() == 2:
+        pos_uav = obs_1d[:, 6:9]
+        pos_target = obs_1d[:, -3:]
+
+    return pos_uav - pos_target
+
+
+def dist2orientation_diff(obs_1d):
+    # orientation difference
+    if obs_1d.dim() == 3:
+        orientation = th.arctan2(obs_1d[:, :, 13], obs_1d[:, :, 14])
+    elif obs_1d.dim() == 2:
+        orientation = th.arctan2(obs_1d[:, 13], obs_1d[:, 14])
+    # """Apply UAV sensor offset."""
+    orientation -= th.pi / 2.
+    orientation[orientation < -th.pi] += 2 * th.pi
+    if obs_1d.dim() == 3:
+        orientation_diff = th.cos(orientation - obs_1d[:, :, 12])
+    elif obs_1d.dim() == 2:
+        orientation_diff = th.cos(orientation - obs_1d[:, 12])
+    return orientation_diff
