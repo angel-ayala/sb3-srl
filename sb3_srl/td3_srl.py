@@ -92,7 +92,7 @@ class SRLTD3(TD3):
         self._update_learning_rate([self.actor.optimizer, self.critic.optimizer])
 
         actor_losses, critic_losses = [], []
-        ae_losses, l2_losses, trep_losses = [], [], []
+        ae_losses, l2_losses = [], []
         mi_min_values = []
         td_errors = []
         for _ in range(gradient_steps):

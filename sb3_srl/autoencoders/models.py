@@ -128,8 +128,8 @@ class VectorModel(AEModel):
         obs_z = self.encoder(observations)
         rec_obs = self.decoder(obs_z)
         # reconstruct normalized observation
-        obs_norm = th.FloatTensor(self.preprocess(observations))
-        rec_loss = obs_reconstruction_loss(rec_obs, obs_norm)
+        obs_norm = th.FloatTensor(self.preprocess(observations.cpu()))
+        rec_loss = obs_reconstruction_loss(rec_obs, obs_norm.to(rec_obs.device))
         # add L2 penalty on latent representation
         latent_loss = latent_l2_loss(obs_z)
         loss = rec_loss + latent_loss * self.decoder_latent_lambda
