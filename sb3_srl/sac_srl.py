@@ -22,6 +22,7 @@ from stable_baselines3.sac.policies import Actor
 from stable_baselines3.sac.policies import SACPolicy
 
 from sb3_srl.autoencoders import instance_autoencoder
+from sb3_srl.autoencoders.utils import compute_mutual_information
 
 
 class SRLSACPolicy(SACPolicy):
