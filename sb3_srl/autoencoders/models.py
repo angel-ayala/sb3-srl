@@ -215,7 +215,7 @@ class VectorTargetDistModel(VectorModel):
         obs_norm[:, 13:] = target_pos2dist(observations)
         obs_ori = dist2orientation_diff(obs_norm)
         obs_norm = th.FloatTensor(self.preprocess(obs_norm))
-        obs_norm[:, 12] = (obs_ori + 1) / 2.
+        obs_norm[:, 12] = obs_ori
         obs_norm = obs_norm.to(rec_obs.device)        
         rec_loss = obs_reconstruction_loss(rec_obs, obs_norm)
         # add L2 penalty on latent representation

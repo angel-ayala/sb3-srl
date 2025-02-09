@@ -65,7 +65,7 @@ class SRLTD3Policy(TD3Policy):
 
 class SRLTD3(TD3):
     def __init__(self, *args, **kwargs):
-        self.scaler = MinMaxScaler()
+        self.scaler = MinMaxScaler(feature_range=(-1, 1))
         self.scaler.fit([args[1].observation_space.low,
                          args[1].observation_space.high])
         super(SRLTD3, self).__init__(*args, **kwargs)
