@@ -17,10 +17,10 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.type_aliases import PyTorchObs
 from stable_baselines3.common.utils import get_parameters_by_name, polyak_update
 
+from stable_baselines3 import TD3
 from stable_baselines3.td3.policies import Actor
 from stable_baselines3.td3.policies import TD3Policy
 
-from sb3_srl.td3 import TD3
 from sb3_srl.autoencoders import instance_autoencoder
 from sb3_srl.autoencoders.utils import compute_mutual_information
 
@@ -131,10 +131,11 @@ class SRLTD3(TD3):
             # Compute reconstruction loss
             rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
+            rep_loss = rep_loss.mean()
             if latent_loss is not None:
                 l2_losses.append(latent_loss.mean().item())
-            ae_losses.append(rep_loss.mean().item())
-            self.policy.ae_model.update_representation(rep_loss.mean())
+            ae_losses.append(rep_loss.item())
+            self.policy.ae_model.update_representation(rep_loss)
 
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:

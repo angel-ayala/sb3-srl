@@ -6,7 +6,7 @@ Created on Thu Feb  6 22:27:14 2025
 @author: angel
 """
 from typing import Optional
-import copy
+
 import numpy as np
 import torch as th
 from torch.nn import functional as F
@@ -63,7 +63,7 @@ class SRLSACPolicy(SACPolicy):
 
 class SRLSAC(SAC):
     def __init__(self, *args, **kwargs):
-        self.scaler = MinMaxScaler()
+        self.scaler = MinMaxScaler(feature_range=(-1, 1))
         self.scaler.fit([args[1].observation_space.low,
                          args[1].observation_space.high])
         super(SRLSAC, self).__init__(*args, **kwargs)
@@ -96,7 +96,7 @@ class SRLSAC(SAC):
         ent_coef_losses, ent_coefs = [], []
         actor_losses, critic_losses = [], []
         ae_losses, l2_losses = [], []
-
+        mi_min_values = []
         for gradient_step in range(gradient_steps):
             # Sample replay buffer
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
@@ -191,6 +191,12 @@ class SRLSAC(SAC):
                 polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
                 polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
 
+            if self._n_updates % 1000 == 0:
+                # Mutual Information to assess latent features' impact
+                q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
+                mi_min = compute_mutual_information(obs_z, q_min.detach())
+                mi_min_values.append(mi_min)
+
         self._n_updates += gradient_steps
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
@@ -198,6 +204,8 @@ class SRLSAC(SAC):
         self.logger.record("train/actor_loss", np.mean(actor_losses))
         self.logger.record("train/critic_loss", np.mean(critic_losses))
         self.logger.record("train/ae_loss", np.mean(ae_losses))
+        if len(mi_min_values) > 0:
+            self.logger.record("train/mutual_information_min", np.mean(mi_min_values))
         if len(l2_losses) > 0:
             self.logger.record("train/l2_loss", np.mean(l2_losses))
         if len(ent_coef_losses) > 0:
