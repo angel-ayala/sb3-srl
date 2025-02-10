@@ -165,9 +165,8 @@ class SRLSAC(SAC):
             # Compute reconstruction loss
             rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
-            rep_loss = rep_loss.mean()
             if latent_loss is not None:
-                l2_losses.append(latent_loss.mean().item())
+                l2_losses.append(latent_loss.item())
             ae_losses.append(rep_loss.item())
             self.policy.ae_model.update_representation(rep_loss)
 

@@ -47,15 +47,14 @@ def obs_reconstruction_loss(true_obs, rec_obs):
 
     output_obs = rec_obs.reshape(true_obs.shape)
 
-    return F.mse_loss(output_obs, true_obs, reduction='none').mean(1)
+    return F.mse_loss(output_obs, true_obs)
 
 
 def latent_l2_loss(latent_value):
     # add L2 penalty on latent representation
     # see https://arxiv.org/pdf/1903.12436.pdf
-    latent_value = 0.5 * latent_value.pow(2).sum(1)
+    latent_value = (0.5 * latent_value.pow(2).sum(1)).mean()
     return latent_value
-
 
 def compute_mutual_information(latents, q_values):
     mi = mutual_info_regression(
@@ -63,7 +62,16 @@ def compute_mutual_information(latents, q_values):
     return mi.mean()
 
 
-def target_pos2dist(obs_1d):
+def orientation_diff(distance_x, distance_y, orientation):
+    curr_orientation = th.arctan2(distance_x, distance_y)
+    # """Apply UAV sensor offset."""
+    curr_orientation -= th.pi / 2.
+    curr_orientation[curr_orientation < -th.pi] += 2 * th.pi
+    orientation_diff = th.cos(curr_orientation - orientation)
+    return orientation_diff
+
+
+def obs2target_diff(obs_1d):
     # replace target_pos by target_dist
     if obs_1d.dim() == 3:
         pos_uav = obs_1d[:, :, 6:9]
@@ -72,20 +80,9 @@ def target_pos2dist(obs_1d):
         pos_uav = obs_1d[:, 6:9]
         pos_target = obs_1d[:, -3:]
 
-    return pos_uav - pos_target
-
-
-def dist2orientation_diff(obs_1d):
-    # orientation difference
+    distance = pos_uav - pos_target
     if obs_1d.dim() == 3:
-        orientation = th.arctan2(obs_1d[:, :, 13], obs_1d[:, :, 14])
+        orientation = orientation_diff(distance[:, 0], distance[:, 1], obs_1d[:, :, 12])
     elif obs_1d.dim() == 2:
-        orientation = th.arctan2(obs_1d[:, 13], obs_1d[:, 14])
-    # """Apply UAV sensor offset."""
-    orientation -= th.pi / 2.
-    orientation[orientation < -th.pi] += 2 * th.pi
-    if obs_1d.dim() == 3:
-        orientation_diff = th.cos(orientation - obs_1d[:, :, 12])
-    elif obs_1d.dim() == 2:
-        orientation_diff = th.cos(orientation - obs_1d[:, 12])
-    return orientation_diff
+        orientation = orientation_diff(distance[:, 0], distance[:, 1], obs_1d[:, 12])
+    return distance, orientation
