@@ -188,7 +188,7 @@ class SRLSAC(SAC):
                 polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
                 polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
 
-            if self._n_updates % 1000 == 0:
+            if gradient_step % 1000 == 0:
                 # Mutual Information to assess latent features' impact
                 q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
                 mi_min = compute_mutual_information(obs_z, q_min.detach())

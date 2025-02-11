@@ -112,9 +112,10 @@ class VectorDecoder(MLP):
         if len(vector_shape) == 2:
             self.h_layers[-1] = nn.ConvTranspose1d(
                 hidden_dim, vector_shape[0], kernel_size=vector_shape[-1])
+        self.fc = nn.Linear(latent_dim, latent_dim)
 
     def forward(self, z):
-        h = z
+        h = th.relu(self.fc(z))
         for hidden_layer in self.h_layers[:-1]:
             h = th.relu(hidden_layer(h))
         last_layer = self.h_layers[-1]

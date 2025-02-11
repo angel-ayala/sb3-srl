@@ -233,7 +233,8 @@ class VectorTargetDistModel(VectorModel):
         # reconstruct target distance
         obs_norm = observations.cpu().clone()  # clone to allows inplace modification
         obs_dist, obs_ori = obs2target_dist(observations)
-        obs_dist_norm = obs_dist / 10.  # normalize to a maximum distance
+        obs_dist_norm = obs_dist.abs() / 10.  # normalize to a maximum distance
+        obs_dist_norm = 2 * (obs_dist_norm - 0.5)
         obs_dist_norm[obs_dist_norm > 1.] = 1.
         obs_dist_norm[obs_dist_norm < -1.] = -1.
         obs_norm = th.FloatTensor(self.preprocess(obs_norm))

@@ -79,6 +79,7 @@ if args.is_srl:
 
     # Policy args
     policy_args = {
+        'net_arch': [256, 256],
         'ae_type': ae_type,
         'ae_params': ae_params,
         }
