@@ -10,7 +10,6 @@ from typing import Optional
 import numpy as np
 import torch as th
 from torch.nn import functional as F
-from sklearn.preprocessing import MinMaxScaler
 
 from stable_baselines3.common.policies import ContinuousCritic
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -27,7 +26,7 @@ from sb3_srl.autoencoders.utils import compute_mutual_information
 
 class SRLSACPolicy(SACPolicy):
     def __init__(self, *args,
-                 ae_type: str = 'Vector', ae_params : dict = {},
+                 ae_type: str = 'Vector', ae_params: dict = {},
                  **kwargs):
         self.features_dim = ae_params['latent_dim']
         super(SRLSACPolicy, self).__init__(*args, **kwargs)
@@ -38,6 +37,8 @@ class SRLSACPolicy(SACPolicy):
         self.ae_model = instance_autoencoder(ae_type, ae_params)
         self.ae_model.adam_optimizer(ae_params['encoder_lr'],
                                      ae_params['decoder_lr'])
+        self.ae_model.fit_scaler([self.observation_space.low,
+                                  self.observation_space.high])
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
@@ -64,9 +65,6 @@ class SRLSACPolicy(SACPolicy):
 
 class SRLSAC(SAC):
     def __init__(self, *args, **kwargs):
-        self.scaler = MinMaxScaler(feature_range=(-1, 1))
-        self.scaler.fit([args[1].observation_space.low,
-                         args[1].observation_space.high])
         super(SRLSAC, self).__init__(*args, **kwargs)
 
     def _create_aliases(self) -> None:
@@ -74,7 +72,6 @@ class SRLSAC(SAC):
         self.encoder = self.policy.ae_model.encoder
         self.decoder = self.policy.ae_model.decoder
         self.encoder_target = self.policy.ae_model.encoder_target
-        self.policy.ae_model.preprocess = self.scaler.transform
 
     def _setup_model(self) -> None:
         super()._setup_model()
@@ -203,10 +200,23 @@ class SRLSAC(SAC):
         self.logger.record("train/ent_coef", np.mean(ent_coefs))
         self.logger.record("train/actor_loss", np.mean(actor_losses))
         self.logger.record("train/critic_loss", np.mean(critic_losses))
-        self.logger.record("train/ae_loss", np.mean(ae_losses))
-        if len(mi_min_values) > 0:
-            self.logger.record("train/mutual_information_min", np.mean(mi_min_values))
-        if len(l2_losses) > 0:
-            self.logger.record("train/l2_loss", np.mean(l2_losses))
         if len(ent_coef_losses) > 0:
             self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
+
+        self.logger.record("train/ae_loss", np.mean(ae_losses))
+        if len(l2_losses) > 0:
+            self.logger.record("train/l2_loss", np.mean(l2_losses))
+        if len(mi_min_values) > 0:
+            self.logger.record("train/mutual_information_min", np.mean(mi_min_values))
+
+    def _excluded_save_params(self) -> list[str]:
+        return super()._excluded_save_params(
+            ) + ["encoder", "decoder", "encoder_target"]  # noqa: RUF005
+
+    def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
+        state_dicts, _ = super()._get_torch_save_params()
+        state_dicts += ["policy.ae_model.encoder"]
+        state_dicts += ["policy.ae_model.encoder_optim"]
+        state_dicts += ["policy.ae_model.decoder"]
+        state_dicts += ["policy.ae_model.decoder_optim"]
+        return state_dicts, []

@@ -71,7 +71,7 @@ def orientation_diff(distance_x, distance_y, orientation):
     return orientation_diff
 
 
-def obs2target_diff(obs_1d):
+def obs2target_dist(obs_1d):
     # replace target_pos by target_dist
     if obs_1d.dim() == 3:
         pos_uav = obs_1d[:, :, 6:9]
@@ -79,10 +79,11 @@ def obs2target_diff(obs_1d):
     elif obs_1d.dim() == 2:
         pos_uav = obs_1d[:, 6:9]
         pos_target = obs_1d[:, -3:]
-
     distance = pos_uav - pos_target
+
     if obs_1d.dim() == 3:
         orientation = orientation_diff(distance[:, 0], distance[:, 1], obs_1d[:, :, 12])
     elif obs_1d.dim() == 2:
         orientation = orientation_diff(distance[:, 0], distance[:, 1], obs_1d[:, 12])
+
     return distance, orientation

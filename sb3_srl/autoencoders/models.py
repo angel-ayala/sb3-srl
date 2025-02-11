@@ -8,6 +8,7 @@ Created on Thu Feb  6 11:23:42 2025
 import copy
 import torch as th
 from torch.nn import functional as F
+from sklearn.preprocessing import MinMaxScaler
 
 from .net import weight_init
 from .net import VectorEncoder
@@ -16,7 +17,7 @@ from .net import VectorSPREncoder
 from .net import VectorSPRDecoder
 from .utils import obs_reconstruction_loss
 from .utils import latent_l2_loss
-from .utils import obs2target_diff
+from .utils import obs2target_dist
 
 
 class AEModel:
@@ -27,8 +28,7 @@ class AEModel:
         self.type = ae_type
         self.encoder = None
         self.decoder = None
-        self.n_calls = 0
-        self.preprocess = None
+        self.scaler = None
 
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
@@ -85,6 +85,28 @@ class AEModel:
     def compute_representation_loss(self, observation, action, next_observation):
         raise NotImplementedError()
 
+    def set_scaler(self, feature_range=(-1, 1)):
+        """Transform features by scaling each feature to a given range.
+
+        Instanciate the sklearn.preprocessing.MinMaxScaler.
+        feature_range : tuple (min, max), default=(-1, 1)
+            Desired range of transformed data.
+        """
+        self.scaler = MinMaxScaler(feature_range=feature_range)
+        self.scaler_ok = False
+
+    def fit_scaler(self, samples):
+        self.scaler.fit(samples)
+        self.scaler_ok = True
+
+    def preprocess(self, observations):
+        if self.scaler is not None:
+            if not self.scaler_ok:
+                print('Warning! preprocess called without fit the scaler')
+            return self.scaler.transform(observations)
+        else:
+            return observations
+
     def make_target(self):
         self.encoder_target = copy.deepcopy(self.encoder)
         self.encoder_target.train(False)
@@ -98,11 +120,9 @@ class AEModel:
 
     def __repr__(self):
         out_str = f"{self.type}Model:\n"
-        for e in self.encoder:
-            out_str += str(e) + '\n'
+        out_str += str(self.encoder)
         out_str += '\n'
-        for d in self.decoder:
-            out_str += str(d) + '\n'
+        out_str += str(self.decoder)
         return out_str
 
 
@@ -122,6 +142,7 @@ class VectorModel(AEModel):
                                          num_layers)
         self.decoder_latent_lambda = decoder_latent_lambda
         self.apply(weight_init)
+        self.set_scaler((-1, 1))
         self.make_target()
 
     def compute_representation_loss(self, observations, actions, next_observations):
@@ -211,7 +232,7 @@ class VectorTargetDistModel(VectorModel):
         rec_obs = self.decoder(obs_z)
         # reconstruct target distance
         obs_norm = observations.cpu().clone()  # clone to allows inplace modification
-        obs_dist, obs_ori = obs2target_diff(observations)
+        obs_dist, obs_ori = obs2target_dist(observations)
         obs_dist_norm = obs_dist / 10.  # normalize to a maximum distance
         obs_dist_norm[obs_dist_norm > 1.] = 1.
         obs_dist_norm[obs_dist_norm < -1.] = -1.
