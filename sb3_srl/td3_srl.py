@@ -27,10 +27,12 @@ from sb3_srl.autoencoders.utils import compute_mutual_information
 class SRLTD3Policy(TD3Policy):
     def __init__(self, *args,
                  ae_type: str = 'Vector', ae_params: dict = {},
+                 encoder_tau: float = 0.999,
                  **kwargs):
         self.features_dim = ae_params['latent_dim']
         super(SRLTD3Policy, self).__init__(*args, **kwargs)
         self.make_autencoder(ae_type, ae_params)
+        self.encoder_tau = encoder_tau
 
     def make_autencoder(self, ae_type, ae_params):
         self.ae_model = instance_autoencoder(ae_type, ae_params)
@@ -96,7 +98,7 @@ class SRLTD3(TD3):
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
 
             with th.no_grad():
-                obs_z = self.encoder(replay_data.observations)
+                obs_z = self.encoder_target(replay_data.observations)
                 next_obs_z = self.encoder_target(replay_data.next_observations)
                 if "SPR" in self.policy.ae_model.type:
                     obs_z = self.encoder.project(obs_z)
@@ -145,7 +147,7 @@ class SRLTD3(TD3):
 
                 polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
                 polyak_update(self.actor.parameters(), self.actor_target.parameters(), self.tau)
-                polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.tau)
+                polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.policy.encoder_tau)
                 # Copy running stats, see GH issue #996
                 polyak_update(self.critic_batch_norm_stats, self.critic_batch_norm_stats_target, 1.0)
                 polyak_update(self.actor_batch_norm_stats, self.actor_batch_norm_stats_target, 1.0)

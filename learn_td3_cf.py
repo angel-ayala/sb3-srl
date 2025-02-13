@@ -82,6 +82,7 @@ if args.is_srl:
         'net_arch': [256, 256],
         'ae_type': ae_type,
         'ae_params': ae_params,
+        'encoder_tau': args.encoder_tau
         }
 else:
     algo, policy = TD3, TD3Policy

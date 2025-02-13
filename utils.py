@@ -93,17 +93,17 @@ def parse_srl_args(parser):
         'State representation learning variation')
     arg_srl.add_argument("--is-srl", action='store_true',
                          help='Whether if method is SRL-based or not.')
-    arg_srl.add_argument("--latent-dim", type=int, default=50,
+    arg_srl.add_argument("--latent-dim", type=int, default=32,
                          help='Number of features in the latent representation Z.')
     arg_srl.add_argument("--hidden-dim", type=int, default=512,
                          help='Number of units in the hidden layers.')
     arg_srl.add_argument("--num-filters", type=int, default=32,
                          help='Number of filters in the CNN hidden layers.')
-    arg_srl.add_argument("--num-layers", type=int, default=2,
+    arg_srl.add_argument("--num-layers", type=int, default=1,
                          help='Number of hidden layers.')
     arg_srl.add_argument("--encoder-lr", type=float, default=1e-3,
                          help='Encoder function Adam learning rate.')
-    arg_srl.add_argument("--encoder-tau", type=float, default=0.05,
+    arg_srl.add_argument("--encoder-tau", type=float, default=0.999,
                          help='Encoder \tau polyak update.')
     arg_srl.add_argument("--decoder-lr", type=float, default=1e-3,
                          help='Decoder function Adam learning rate.')

@@ -8,6 +8,7 @@ Created on Thu Feb  6 11:23:42 2025
 
 import torch as th
 from torch import nn
+import torch.nn.functional as F
 
 
 def tie_weights(src, trg):
@@ -49,7 +50,7 @@ class MLP(nn.Module):
     def forward(self, obs):
         h = obs
         for h_layer in self.h_layers:
-            h = th.relu(h_layer(h))
+            h = F.leaky_relu(h_layer(h))
 
         return h
 
@@ -65,7 +66,7 @@ class Conv1dMLP(MLP):
     def forward_h(self, obs):
         h = obs
         for hidden_layer in self.h_layers[:-1]:
-            h = th.relu(hidden_layer(h))
+            h = F.leaky_relu(hidden_layer(h))
             if isinstance(hidden_layer, nn.Conv1d):
                 h = h.squeeze(2)
         return h
@@ -88,7 +89,7 @@ class VectorEncoder(Conv1dMLP):
         self.ln = nn.LayerNorm(self.feature_dim)
 
     def forward(self, obs, detach=False):
-        z = th.relu(super().forward(obs))
+        z = F.leaky_relu(super().forward(obs))
         if detach:
             z = z.detach()
         out = self.ln(self.fc(z))
@@ -115,9 +116,9 @@ class VectorDecoder(MLP):
         self.fc = nn.Linear(latent_dim, latent_dim)
 
     def forward(self, z):
-        h = th.relu(self.fc(z))
+        h = F.leaky_relu(self.fc(z))
         for hidden_layer in self.h_layers[:-1]:
-            h = th.relu(hidden_layer(h))
+            h = F.leaky_relu(hidden_layer(h))
         last_layer = self.h_layers[-1]
         if isinstance(last_layer, nn.ConvTranspose1d):
             h = h.unsqueeze(2)

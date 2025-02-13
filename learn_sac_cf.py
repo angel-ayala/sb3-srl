@@ -75,6 +75,7 @@ if args.is_srl:
     policy_args = {
         'ae_type': ae_type,
         'ae_params': ae_params,
+        'encoder_tau': args.encoder_tau,
         }
 else:
     algo, policy = SAC, SACPolicy
