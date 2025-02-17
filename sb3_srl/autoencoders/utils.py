@@ -8,6 +8,7 @@ Created on Thu Feb  6 11:33:38 2025
 import torch as th
 from torch.nn import functional as F
 from sklearn.feature_selection import mutual_info_regression
+from info_nce import InfoNCE
 
 
 def preprocess_obs(obs, bits=5):
@@ -137,3 +138,9 @@ def compute_elevation_angle(reference: th.Tensor, target: th.Tensor) -> th.Tenso
     angle = th.arctan2(delta_z, h_dist)
     angle /= (th.pi / 2)  # Normalize to the range [-1, 1]
     return angle
+
+
+def info_nce_loss(query, positives):
+    # Use InfoNCE to align encoded states with the value predictions
+    loss_fn = InfoNCE()
+    return loss_fn(query, positives)

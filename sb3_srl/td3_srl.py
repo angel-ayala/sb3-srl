@@ -24,6 +24,28 @@ from sb3_srl.autoencoders import instance_autoencoder
 from sb3_srl.autoencoders.utils import compute_mutual_information
 
 
+class EarlyStopper:
+    def __init__(self, patience=4500, min_delta=0.):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.min_validation_loss = float('inf')
+        self.stop = False
+
+    def __call__(self, validation_loss):
+        if self.stop:
+            return True
+        if validation_loss < self.min_validation_loss:
+            self.min_validation_loss = validation_loss
+            self.counter = 0
+        elif validation_loss > (self.min_validation_loss + self.min_delta):
+            self.counter += 1
+            if self.counter >= self.patience:
+                print('EarlyStopper')
+                self.stop = True
+        return self.stop
+
+
 class SRLTD3Policy(TD3Policy):
     def __init__(self, *args,
                  ae_type: str = 'Vector', ae_params: dict = {},
@@ -38,8 +60,9 @@ class SRLTD3Policy(TD3Policy):
         self.ae_model = instance_autoencoder(ae_type, ae_params)
         self.ae_model.adam_optimizer(ae_params['encoder_lr'],
                                      ae_params['decoder_lr'])
-        self.ae_model.fit_scaler([self.observation_space.low,
-                                  self.observation_space.high])
+        if 'Advantage' not in ae_type:
+            self.ae_model.fit_scaler([self.observation_space.low,
+                                      self.observation_space.high])
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
@@ -68,6 +91,7 @@ class SRLTD3Policy(TD3Policy):
 class SRLTD3(TD3):
     def __init__(self, *args, **kwargs):
         super(SRLTD3, self).__init__(*args, **kwargs)
+        #self.ae_stop = EarlyStopper(9000, 0.)
 
     def _create_aliases(self) -> None:
         super()._create_aliases()
@@ -120,6 +144,7 @@ class SRLTD3(TD3):
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             assert isinstance(critic_loss, th.Tensor)
             critic_losses.append(critic_loss.item())
+            adv_val = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
 
             # Optimize the critics
             self.critic.optimizer.zero_grad()
@@ -127,11 +152,17 @@ class SRLTD3(TD3):
             self.critic.optimizer.step()
 
             # Compute reconstruction loss
-            rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
-                replay_data.observations, replay_data.actions, replay_data.next_observations)
+            if 'Advantage' in self.policy.ae_model.type:
+                rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
+                    replay_data.observations, replay_data.actions, replay_data.next_observations,
+                    adv_val.unsqueeze(1))
+            else:
+                rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
+                    replay_data.observations, replay_data.actions, replay_data.next_observations)
             if latent_loss is not None:
                 l2_losses.append(latent_loss.item())
             ae_losses.append(rep_loss.item())
+            #if not self.ae_stop(rep_loss.item()):
             self.policy.ae_model.update_representation(rep_loss)
 
             # Delayed policy updates
@@ -155,8 +186,8 @@ class SRLTD3(TD3):
 
             if self._n_updates % 1000 == 0:
                 # Mutual Information to assess latent features' impact
-                q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
-                mi_min = compute_mutual_information(obs_z, q_min.detach())
+                # q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
+                mi_min = compute_mutual_information(obs_z, adv_val.detach())
                 mi_min_values.append(mi_min)
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")

@@ -15,9 +15,11 @@ from .net import VectorEncoder
 from .net import VectorDecoder
 from .net import VectorSPREncoder
 from .net import VectorSPRDecoder
+from .net import AdvantageDecoder
 from .utils import obs_reconstruction_loss
 from .utils import latent_l2_loss
 from .utils import obs2target_dist
+from .utils import info_nce_loss
 
 
 class AEModel:
@@ -245,3 +247,46 @@ class VectorTargetDistModel(VectorModel):
         latent_loss = latent_l2_loss(obs_z)
         loss = rec_loss + latent_loss * self.decoder_latent_lambda
         return loss, latent_loss
+
+
+class AdvantageModel(AEModel):
+    def __init__(self,
+                 vector_shape: tuple,
+                 action_shape: tuple,
+                 latent_dim: int = 50,
+                 hidden_dim: int = 256,
+                 num_layers: int = 2,
+                 encoder_only: bool = False,
+                 decoder_latent_lambda: float = 1e-6):
+        super(AdvantageModel, self).__init__('Advantage')
+        self.encoder = VectorEncoder(vector_shape, latent_dim, hidden_dim,
+                                     num_layers)
+        if not encoder_only:
+            self.decoder = AdvantageDecoder(action_shape, latent_dim, hidden_dim,
+                                            num_layers)
+        self.decoder_latent_lambda = decoder_latent_lambda
+        self.apply(weight_init)
+        # self.set_scaler((-1, 1))
+        self.make_target()
+
+    def compute_representation_loss(self, observations, actions, next_observations, advantage_values):
+        # Compute reconstruction loss
+        obs_z = self.encoder(observations)
+        # obs_z1 = self.encoder(next_observations)
+        adv_code, adv_pos = self.decoder(obs_z, actions)
+        # adv_code_t1 = self.decoder.forward_proj(obs_z1)
+        adv_code_t1 = self.decoder.reverse(advantage_values)
+        contrastive = info_nce_loss(adv_code, adv_code_t1)
+        # regression = F.mse_loss(adv_pos, advantage_values)# + th.mse_loss(adv_pos_t1, advantage_values)
+        tloss = contrastive #+ 1e-3 * regression 
+        return tloss, None
+        
+        # obs_z1 = self.encoder(next_observations)
+        
+        # reconstruct normalized observation
+        # obs_norm = th.FloatTensor(self.preprocess(observations.cpu()))
+        # rec_loss = obs_reconstruction_loss(rec_obs, obs_norm.to(rec_obs.device))
+        # # add L2 penalty on latent representation
+        # latent_loss = latent_l2_loss(obs_z)
+        # loss = rec_loss + latent_loss * self.decoder_latent_lambda
+        # return loss, latent_loss
