@@ -22,6 +22,28 @@ from .utils import obs2target_dist
 from .utils import info_nce_loss
 
 
+class EarlyStopper:
+    def __init__(self, patience=4500, min_delta=0.):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.min_validation_loss = float('inf')
+        self.stop = False
+
+    def __call__(self, validation_loss):
+        if self.stop:
+            return True
+        if validation_loss < self.min_validation_loss:
+            self.min_validation_loss = validation_loss
+            self.counter = 0
+        elif validation_loss > (self.min_validation_loss + self.min_delta):
+            self.counter += 1
+            if self.counter >= self.patience:
+                print('EarlyStopper')
+                self.stop = True
+        return self.stop
+
+
 class AEModel:
     LOG_FREQ = 1000
 
@@ -31,6 +53,7 @@ class AEModel:
         self.encoder = None
         self.decoder = None
         self.scaler = None
+        self.stop = None
 
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
@@ -108,17 +131,24 @@ class AEModel:
             return self.scaler.transform(observations)
         else:
             return observations
+    
+    def set_stopper(self, patience, threshold=0.):
+        self.stop = EarlyStopper(patience, threshold)
 
     def make_target(self):
         self.encoder_target = copy.deepcopy(self.encoder)
         self.encoder_target.train(False)
 
     def update_representation(self, loss):
-        self.encoder_optim_zero_grad()
-        self.decoder_optim_zero_grad()
-        loss.backward()
-        self.encoder_optim_step()
-        self.decoder_optim_step()
+        must_update = True
+        if self.stop is not None:
+            must_update = not self.stop(loss)
+        if must_update:
+            self.encoder_optim_zero_grad()
+            self.decoder_optim_zero_grad()
+            loss.backward()
+            self.encoder_optim_step()
+            self.decoder_optim_step()
 
     def __repr__(self):
         out_str = f"{self.type}Model:\n"

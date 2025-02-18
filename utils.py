@@ -105,6 +105,8 @@ def parse_srl_args(parser):
                          help='Encoder function Adam learning rate.')
     arg_srl.add_argument("--encoder-tau", type=float, default=0.999,
                          help='Encoder \tau polyak update.')
+    arg_srl.add_argument("--encoder-steps", type=int, default=9000,
+                         help='Steps of no improvement to stop Encoder gradient.')
     arg_srl.add_argument("--decoder-lr", type=float, default=1e-3,
                          help='Decoder function Adam learning rate.')
     arg_srl.add_argument("--decoder-latent-lambda", type=float, default=1e-6,
@@ -275,6 +277,7 @@ def args2ae_config(args, env_params):
         'encoder_lr': args.encoder_lr,
         'decoder_lr': args.decoder_lr,
         'encoder_only': args.encoder_only,
+        'encoder_steps': args.encoder_steps,
         'decoder_latent_lambda': args.decoder_latent_lambda,
         'decoder_weight_decay': args.decoder_weight_decay
         }

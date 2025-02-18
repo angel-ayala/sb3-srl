@@ -37,6 +37,7 @@ class SRLSACPolicy(SACPolicy):
         self.ae_model = instance_autoencoder(ae_type, ae_params)
         self.ae_model.adam_optimizer(ae_params['encoder_lr'],
                                      ae_params['decoder_lr'])
+        self.ae_model.set_stopper(ae_params['encoder_steps'])
         self.ae_model.fit_scaler([self.observation_space.low,
                                   self.observation_space.high])
 
