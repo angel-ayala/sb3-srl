@@ -303,13 +303,16 @@ class AdvantageModel(AEModel):
         # Compute reconstruction loss
         obs_z = self.encoder(observations)
         # obs_z1 = self.encoder(next_observations)
-        adv_code, adv_pos = self.decoder(obs_z, actions)
+        adv_code, rec_obs = self.decoder(obs_z, actions)
         # adv_code_t1 = self.decoder.forward_proj(obs_z1)
-        adv_code_t1 = self.decoder.reverse(advantage_values)
+        adv_code_t1 = self.decoder.reverse(advantage_values ** 2.)
         contrastive = info_nce_loss(adv_code, adv_code_t1)
         # regression = F.mse_loss(adv_pos, advantage_values)# + th.mse_loss(adv_pos_t1, advantage_values)
-        tloss = contrastive #+ 1e-3 * regression 
-        return tloss, None
+        latent_loss = latent_l2_loss(obs_z)
+        # rec_loss = rec_loss + latent_loss * self.decoder_latent_lambda
+        rec_loss = latent_loss * self.decoder_latent_lambda
+        loss = rec_loss + contrastive
+        return loss, latent_loss
         
         # obs_z1 = self.encoder(next_observations)
         

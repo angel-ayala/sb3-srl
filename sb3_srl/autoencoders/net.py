@@ -185,23 +185,40 @@ class VectorSPRDecoder(nn.Module):
 class AdvantageDecoder(nn.Module):
     """AdvantageDecoder as representation learning function."""
     def __init__(self,
+                 vector_shape: tuple,
                  action_shape: tuple,
                  latent_dim: int,
                  hidden_dim: int,
                  num_layers: int = 2):
         super(AdvantageDecoder, self).__init__()
-        self.code = nn.Linear(latent_dim + action_shape[-1], latent_dim)
-        self.projection = nn.Linear(latent_dim, hidden_dim)
-        self.function = nn.Linear(hidden_dim, 1)
+        self.code = nn.Sequential(
+            nn.Linear(latent_dim + action_shape[-1], hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, latent_dim),
+            nn.LayerNorm(latent_dim))
         self.reverse = nn.Sequential(
             nn.Linear(1, hidden_dim),
             nn.LeakyReLU(),
-            nn.Linear(hidden_dim, hidden_dim))
+            nn.Linear(hidden_dim, latent_dim),
+            nn.LayerNorm(latent_dim))
+        self.projection = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim), 
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, latent_dim))
+    
+    def forward_code(self, z, action):
+        code = self.code(th.cat([z, action], dim=1))
+        return th.tanh(code)
 
     def forward_proj(self, code):
-        return self.projection(code)
+        proj = self.projection(code)
+        return th.tanh(proj)
+    
+    def forward_rev(self, value):
+        rev = self.reverse(value)
+        return th.tanh(rev)
 
     def forward(self, z, action):
-        code = F.leaky_relu(self.code(th.cat([z, action], dim=1)))
+        code = self.forward_code(z, action)
         proj = self.forward_proj(code)
-        return proj, self.function(F.leaky_relu(proj))
+        return proj
