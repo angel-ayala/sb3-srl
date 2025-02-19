@@ -208,10 +208,6 @@ class AdvantageDecoder(nn.Module):
     def forward_proj(self, code):
         proj = self.projection(code)
         return th.tanh(proj)
-    
-    def forward_rev(self, value):
-        rev = self.reverse(value)
-        return th.tanh(rev)
 
     def forward(self, z, action):
         code = self.forward_code(z, action)

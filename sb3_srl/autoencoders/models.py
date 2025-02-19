@@ -310,9 +310,11 @@ class AdvantageModel(AEModel):
     def compute_representation_loss(self, observations, actions, next_observations, advantage_values):
         # Compute reconstruction loss
         obs_z = self.encoder(observations)
-        obs_z1 = self.encoder_target(next_observations)
         adv_code = self.decoder(obs_z, actions)
+        obs_z1 = self.encoder_target(next_observations)
         contrastive = info_nce_loss(obs_z1, adv_code)
+        # obs_code = self.decoder.forward_proj(obs_z1)
+        # contrastive = info_nce_loss(obs_code, adv_code)
         latent_loss = latent_l2_loss(obs_z1)
         loss = contrastive + latent_loss * self.decoder_latent_lambda
         return loss, latent_loss
