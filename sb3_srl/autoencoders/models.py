@@ -209,6 +209,10 @@ class VectorSPRModel(AEModel):
         self.apply(weight_init)
         self.make_target()
 
+    def fit_scaler(self, values=None):
+        # not required
+        pass
+
     def forward_y_hat(self, observation, action):
         z_t = self.encoder(observation)
         z_hat = self.decoder.transition(z_t, action)
@@ -238,6 +242,7 @@ class VectorSPRModel(AEModel):
             z_t1 = self.encoder_target(next_observations)
             y_curl = self.encoder_target.project(z_t1)
         loss = self.compute_regression_loss(y_curl, y_hat)
+        # TODO: add L2 value
         return loss, None
 
 
@@ -296,8 +301,11 @@ class AdvantageModel(AEModel):
                                             num_layers)
         self.decoder_latent_lambda = decoder_latent_lambda
         self.apply(weight_init)
-        # self.set_scaler((-1, 1))
         self.make_target()
+
+    def fit_scaler(self, values=None):
+        # not required
+        pass
 
     def compute_representation_loss(self, observations, actions, next_observations, advantage_values):
         # Compute reconstruction loss

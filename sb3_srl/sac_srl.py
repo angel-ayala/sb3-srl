@@ -154,6 +154,7 @@ class SRLSAC(SAC):
             critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             assert isinstance(critic_loss, th.Tensor)  # for type checker
             critic_losses.append(critic_loss.item())  # type: ignore[union-attr]
+            adv_val = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
 
             # Optimize the critic
             self.critic.optimizer.zero_grad()
@@ -161,8 +162,13 @@ class SRLSAC(SAC):
             self.critic.optimizer.step()
 
             # Compute reconstruction loss
-            rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
-                replay_data.observations, replay_data.actions, replay_data.next_observations)
+            if 'Advantage' in self.policy.ae_model.type:
+                rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
+                    replay_data.observations, replay_data.actions, replay_data.next_observations,
+                    adv_val.unsqueeze(1))
+            else:
+                rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
+                    replay_data.observations, replay_data.actions, replay_data.next_observations)
             if latent_loss is not None:
                 l2_losses.append(latent_loss.item())
             ae_losses.append(rep_loss.item())
@@ -191,8 +197,7 @@ class SRLSAC(SAC):
 
             if gradient_step % 1000 == 0:
                 # Mutual Information to assess latent features' impact
-                q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
-                mi_min = compute_mutual_information(obs_z, q_min.detach())
+                mi_min = compute_mutual_information(obs_z, adv_val)
                 mi_min_values.append(mi_min)
 
         self._n_updates += gradient_steps
