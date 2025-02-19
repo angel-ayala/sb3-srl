@@ -123,7 +123,7 @@ model = algo(policy, env,
              _init_setup_model=True)
 
 # Train the agent
-model.learn(total_timesteps=args.steps,
+model.learn(total_timesteps=(args.steps + args.memory_steps),
             callback=[checkpoint_callback, args_callback],
             log_interval=4,
             progress_bar=True,

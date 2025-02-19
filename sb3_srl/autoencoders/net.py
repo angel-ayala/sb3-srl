@@ -116,7 +116,7 @@ class VectorDecoder(MLP):
         self.fc = nn.Linear(latent_dim, latent_dim)
 
     def forward(self, z):
-        h = F.leaky_relu(self.fc(z))
+        h = self.fc(z)
         for hidden_layer in self.h_layers[:-1]:
             h = F.leaky_relu(hidden_layer(h))
         last_layer = self.h_layers[-1]
