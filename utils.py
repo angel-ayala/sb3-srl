@@ -326,6 +326,8 @@ def args2logpath(args, algo):
         path_suffix += '-spr'
     if args.model_vector_target_dist:
         path_suffix += '-tdist'
+    if args.model_advantage:
+        path_suffix += '-adv'
     # if args.model_vector_difference:
     #     path_suffix += '-diff'
     exp_name = f"{algo}{path_suffix}"
