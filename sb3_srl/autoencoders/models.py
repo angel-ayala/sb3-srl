@@ -215,8 +215,9 @@ class VectorSPRModel(AEModel):
 
     def forward_y_hat(self, observation, action):
         z_t = self.encoder(observation)
-        z_hat = self.decoder.transition(z_t, action)
-        g0_out = self.encoder.project(z_hat)
+        # z_hat = self.decoder.transition(z_t, action)
+        # g0_out = self.encoder.project(z_hat)
+        g0_out = self.decoder(z_t, action)
         y_hat = self.decoder.predict(g0_out)
         return y_hat
 
@@ -240,7 +241,7 @@ class VectorSPRModel(AEModel):
         y_hat = self.forward_y_hat(observations, actions)
         with th.no_grad():
             z_t1 = self.encoder_target(next_observations)
-            y_curl = self.encoder_target.project(z_t1)
+            y_curl = self.decoder.project(z_t1)
         loss = self.compute_regression_loss(y_curl, y_hat)
         # TODO: add L2 value
         return loss, None

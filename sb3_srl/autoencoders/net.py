@@ -38,6 +38,17 @@ def weight_init(m):
         nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
 
 
+def renormalize(tensor, first_dim=1):
+    if first_dim < 0:
+        first_dim = len(tensor.shape) + first_dim
+    flat_tensor = tensor.view(*tensor.shape[:first_dim], -1)
+    max = th.max(flat_tensor, first_dim, keepdim=True).values
+    min = th.min(flat_tensor, first_dim, keepdim=True).values
+    flat_tensor = (flat_tensor - min)/(max - min)
+
+    return flat_tensor.view(*tensor.shape)
+
+
 class MLP(nn.Module):
     def __init__(self, n_input, n_output, hidden_dim, num_layers=2):
         super(MLP, self).__init__()
@@ -126,27 +137,6 @@ class VectorDecoder(MLP):
         return out
 
 
-class VectorSPREncoder(VectorEncoder):
-    def __init__(self,
-                 vector_shape: tuple,
-                 latent_dim: int,
-                 hidden_dim: int,
-                 num_layers: int = 2):
-        super(VectorSPREncoder, self).__init__(
-            vector_shape, latent_dim, hidden_dim, num_layers)
-        self.prj = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, latent_dim),
-            )
-
-    def project(self, z):
-        h_fc = self.prj(z)
-        return h_fc
-
-
 class VectorSPRDecoder(nn.Module):
     """VectorSPRDecoder for reconstruction function."""
     def __init__(self,
@@ -155,14 +145,16 @@ class VectorSPRDecoder(nn.Module):
                  hidden_dim: int,
                  num_layers: int = 2):
         super(VectorSPRDecoder, self).__init__()
-        self.tran = nn.Sequential(
+        self.code = nn.Sequential(
             nn.Linear(latent_dim + action_shape[-1], hidden_dim),
             nn.ReLU(),
+            nn.BatchNorm1d(hidden_dim, affine=True),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, latent_dim),
-            )
-        self.pred = nn.Sequential(
+            nn.BatchNorm1d(hidden_dim, affine=True),
+            nn.Linear(hidden_dim, latent_dim))
+
+        self.projection = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
@@ -170,12 +162,26 @@ class VectorSPRDecoder(nn.Module):
             nn.Linear(hidden_dim, latent_dim),
             )
 
+        self.pred = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim),
+            nn.ReLU(),
+            nn.BatchNorm1d(hidden_dim, affine=True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, latent_dim),
+            )
+
     def transition(self, z, action):
-        h_fc = self.tran(th.cat([z, action], dim=1))
+        h_fc = self.code(th.cat([z, action], dim=1))
+        h_fc = renormalize(th.relu(h_fc), 1)
         return h_fc
 
     def predict(self, z_prj):
         h_fc = self.pred(z_prj)
+        return h_fc
+
+    def project(self, z):
+        h_fc = self.projection(z)
         return h_fc
 
     def forward(self, z):
