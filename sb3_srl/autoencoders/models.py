@@ -305,7 +305,7 @@ class AdvantageModel(AEModel):
         obs_z1 = self.encoder_target(next_observations)
         adv_code = self.decoder(obs_z, actions)
         contrastive = info_nce_loss(obs_z1, adv_code)
-        latent_loss = latent_l2_loss(adv_code)
+        latent_loss = latent_l2_loss(obs_z1)
         loss = contrastive + latent_loss * self.decoder_latent_lambda
         return loss, latent_loss
         

@@ -196,11 +196,6 @@ class AdvantageDecoder(nn.Module):
             nn.LeakyReLU(),
             nn.Linear(hidden_dim, latent_dim),
             nn.LayerNorm(latent_dim))
-        self.reverse = nn.Sequential(
-            nn.Linear(1, hidden_dim),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, latent_dim),
-            nn.LayerNorm(latent_dim))
         self.projection = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim), 
             nn.LeakyReLU(),
