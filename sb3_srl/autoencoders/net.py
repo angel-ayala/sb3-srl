@@ -184,8 +184,9 @@ class VectorSPRDecoder(nn.Module):
         h_fc = self.projection(z)
         return h_fc
 
-    def forward(self, z):
-        return self.predict(z)
+    def forward(self, z, action):
+        code = self.transition(z, action)
+        return self.project(code)
 
 
 class AdvantageDecoder(nn.Module):

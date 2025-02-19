@@ -13,7 +13,6 @@ from sklearn.preprocessing import MinMaxScaler
 from .net import weight_init
 from .net import VectorEncoder
 from .net import VectorDecoder
-from .net import VectorSPREncoder
 from .net import VectorSPRDecoder
 from .net import AdvantageDecoder
 from .utils import obs_reconstruction_loss
@@ -200,8 +199,8 @@ class VectorSPRModel(AEModel):
                  encoder_only: bool = False,
                  decoder_latent_lambda: float = 1e-6):
         super(VectorSPRModel, self).__init__('VectorSPR')
-        self.encoder = VectorSPREncoder(vector_shape, latent_dim, hidden_dim,
-                                        num_layers)
+        self.encoder = VectorEncoder(vector_shape, latent_dim, hidden_dim,
+                                     num_layers)
         if not encoder_only:
             self.decoder = VectorSPRDecoder(action_shape, latent_dim,
                                             hidden_dim, num_layers)
