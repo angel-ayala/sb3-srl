@@ -103,9 +103,6 @@ class SRLSAC(SAC):
             with th.no_grad():
                 obs_z = self.encoder_target(replay_data.observations)
                 next_obs_z = self.encoder_target(replay_data.next_observations)
-                if "SPR" in self.policy.ae_model.type:
-                    obs_z = self.encoder.project(obs_z)
-                    next_obs_z = self.encoder_target.project(next_obs_z)
 
             # We need to sample because `log_std` may have changed between two gradient steps
             if self.use_sde:

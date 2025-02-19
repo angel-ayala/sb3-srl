@@ -147,34 +147,21 @@ class VectorSPRDecoder(nn.Module):
         super(VectorSPRDecoder, self).__init__()
         self.code = nn.Sequential(
             nn.Linear(latent_dim + action_shape[-1], hidden_dim),
-            nn.ReLU(),
-            nn.BatchNorm1d(hidden_dim, affine=True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.BatchNorm1d(hidden_dim, affine=True),
+            nn.LeakyReLU(),
             nn.Linear(hidden_dim, latent_dim))
 
         self.projection = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(hidden_dim, latent_dim),
             )
 
-        self.pred = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.ReLU(),
-            nn.BatchNorm1d(hidden_dim, affine=True),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, latent_dim),
-            )
+        self.pred = nn.Linear(latent_dim, latent_dim)
 
     def transition(self, z, action):
         h_fc = self.code(th.cat([z, action], dim=1))
         h_fc = renormalize(th.relu(h_fc), 1)
-        return h_fc
+        return th.tanh(h_fc)
 
     def predict(self, z_prj):
         h_fc = self.pred(z_prj)
@@ -182,7 +169,7 @@ class VectorSPRDecoder(nn.Module):
 
     def project(self, z):
         h_fc = self.projection(z)
-        return h_fc
+        return th.tanh(h_fc)
 
     def forward(self, z, action):
         code = self.transition(z, action)

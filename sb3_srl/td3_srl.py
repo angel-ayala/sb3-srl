@@ -102,9 +102,6 @@ class SRLTD3(TD3):
             with th.no_grad():
                 obs_z = self.encoder_target(replay_data.observations)
                 next_obs_z = self.encoder_target(replay_data.next_observations)
-                if "SPR" in self.policy.ae_model.type:
-                    obs_z = self.encoder.project(obs_z)
-                    next_obs_z = self.encoder_target.project(next_obs_z)
                 # Select action according to policy and add clipped noise
                 noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
                 noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)

@@ -204,6 +204,7 @@ class VectorSPRModel(AEModel):
         if not encoder_only:
             self.decoder = VectorSPRDecoder(action_shape, latent_dim,
                                             hidden_dim, num_layers)
+            self.encoder.projection = copy.deepcopy(self.decoder.projection)
         self.decoder_latent_lambda = decoder_latent_lambda
         self.apply(weight_init)
         self.make_target()
@@ -211,12 +212,19 @@ class VectorSPRModel(AEModel):
     def fit_scaler(self, values=None):
         # not required
         pass
+    
+    def project_target(self, z):
+        h_fc = self.encoder_target.projection(z)
+        return th.tanh(h_fc)
+
+    def project_online(self, z):
+        h_fc = self.encoder.projection(z)
+        return th.tanh(h_fc)
 
     def forward_y_hat(self, observation, action):
         z_t = self.encoder(observation)
-        # z_hat = self.decoder.transition(z_t, action)
-        # g0_out = self.encoder.project(z_hat)
-        g0_out = self.decoder(z_t, action)
+        z_hat = self.decoder.transition(z_t, action)
+        g0_out = self.project_online(z_hat)
         y_hat = self.decoder.predict(g0_out)
         return y_hat
 
@@ -240,10 +248,14 @@ class VectorSPRModel(AEModel):
         y_hat = self.forward_y_hat(observations, actions)
         with th.no_grad():
             z_t1 = self.encoder_target(next_observations)
-            y_curl = self.decoder.project(z_t1)
-        loss = self.compute_regression_loss(y_curl, y_hat)
-        # TODO: add L2 value
-        return loss, None
+            y_curl = self.project_target(z_t1)
+        # loss = self.compute_regression_loss(y_curl, y_hat)
+        contrastive = info_nce_loss(y_curl, y_hat)
+        # L2 over Z
+        # return loss, None
+        latent_loss = latent_l2_loss(z_t1)
+        loss = contrastive + latent_loss * self.decoder_latent_lambda
+        return loss, latent_loss
 
 
 class VectorTargetDistModel(VectorModel):
