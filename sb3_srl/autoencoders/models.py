@@ -145,7 +145,8 @@ class AEModel:
         if must_update:
             self.encoder_optim_zero_grad()
             self.decoder_optim_zero_grad()
-            loss.backward()
+        loss.backward()
+        if must_update:
             self.encoder_optim_step()
             self.decoder_optim_step()
 
@@ -319,7 +320,42 @@ class AdvantageModel(AEModel):
         # not required
         pass
 
-    def compute_representation_loss(self, observations, actions, next_observations, advantage_values):
+    def compute_probability_of_success(self, current_q_values, target_q_values, epsilon=1e-6):
+        """
+        Computes the probability of success based on TD3 critics.
+        
+        Args:
+            current_q_values (tuple): Tuple of tensors (Q1, Q2) representing the current Q-values from both critics.
+            target_q_values (tuple): Tuple of tensors (Q1_target, Q2_target) representing target Q-values.
+            epsilon (float): Small constant for numerical stability.
+        
+        Returns:
+            torch.Tensor: Probability of success for each action in the batch.
+        """
+        # Unpack critic values
+        Q1, Q2 = current_q_values
+        # Q1_target, Q2_target = target_q_values
+    
+        # Conservative Q-value estimate
+        Q_min = th.min(Q1, Q2).detach()
+    
+        # Estimate value function V(s)
+        # V_s = th.min(Q1_target, Q2_target)  # Conservative estimate from target critics
+    
+        # Compute probability of success
+        # prob_success = th.log10((Q_min + epsilon) / (target_q_values.detach() + epsilon))
+        prob_success = (Q_min + epsilon) / (target_q_values.detach() + epsilon)
+    
+        return prob_success
+    
+    def compute_success_loss(self, observations, actions, current_q_values, target_q_values):
+        success_prob = self.compute_probability_of_success(current_q_values, target_q_values)
+        with th.no_grad():
+            obs_z = self.encoder(observations)
+        success_hat = self.decoder.forward_prob(obs_z, actions)
+        return F.mse_loss(success_prob, success_hat)
+
+    def compute_representation_loss(self, observations, actions, next_observations):
         # Compute reconstruction loss
         obs_z = self.encoder(observations)
         adv_code = self.decoder(obs_z, actions)

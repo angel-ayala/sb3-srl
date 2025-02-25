@@ -194,7 +194,15 @@ class AdvantageDecoder(nn.Module):
             nn.Linear(latent_dim, hidden_dim), 
             nn.LeakyReLU(),
             nn.Linear(hidden_dim, latent_dim))
+        self.success = nn.Sequential(
+            nn.Linear(latent_dim + action_shape[-1], hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, 1))
     
+    def forward_prob(self, z, action):
+        prob = self.success(th.cat([z, action], dim=1))
+        return th.sigmoid(prob)
+
     def forward_code(self, z, action):
         code = self.code(th.cat([z, action], dim=1))
         return th.tanh(code)

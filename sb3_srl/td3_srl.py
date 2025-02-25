@@ -94,13 +94,13 @@ class SRLTD3(TD3):
         actor_losses, critic_losses = [], []
         ae_losses, l2_losses = [], []
         mi_min_values = []
+        p_values = []
         for _ in range(gradient_steps):
             self._n_updates += 1
             # Sample replay buffer
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
 
             with th.no_grad():
-                obs_z = self.encoder_target(replay_data.observations)
                 next_obs_z = self.encoder_target(replay_data.next_observations)
                 # Select action according to policy and add clipped noise
                 noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
@@ -113,7 +113,12 @@ class SRLTD3(TD3):
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
             # Get current Q-values estimates for each critic network
-            current_q_values = self.critic(obs_z, replay_data.actions)
+            if 'SPR' in self.policy.ae_model.type:
+                obs = self.encoder(replay_data.observations)
+            else:
+                with th.no_grad():
+                    obs = self.encoder_target(replay_data.observations)
+            current_q_values = self.critic(obs, replay_data.actions)
 
             # Compute critic loss
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
@@ -121,26 +126,37 @@ class SRLTD3(TD3):
             critic_losses.append(critic_loss.item())
             adv_val = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
 
-            # Optimize the critics
-            self.critic.optimizer.zero_grad()
-            critic_loss.backward()
-            self.critic.optimizer.step()
-
             # Compute reconstruction loss
             if 'Advantage' in self.policy.ae_model.type:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
-                    replay_data.observations, replay_data.actions, replay_data.next_observations,
-                    adv_val.unsqueeze(1))
+                    replay_data.observations, replay_data.actions, replay_data.next_observations)
+                p_loss = self.policy.ae_model.compute_success_loss(replay_data.observations, replay_data.actions, current_q_values, next_q_values)
+                p_values.append(p_loss.item())
+                rep_loss += p_loss * 1e-3
             else:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
             if latent_loss is not None:
                 l2_losses.append(latent_loss.item())
             ae_losses.append(rep_loss.item())
-            self.policy.ae_model.update_representation(rep_loss)
+
+            if 'SPR' in self.policy.ae_model.type:
+                # Optimize the critics
+                self.critic.optimizer.zero_grad()
+                self.policy.ae_model.update_representation(critic_loss + rep_loss)
+                self.critic.optimizer.step()
+            else:
+                self.critic.optimizer.zero_grad()
+                critic_loss.backward()
+                self.critic.optimizer.step()
+                self.policy.ae_model.update_representation(rep_loss)
 
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:
+                # update representations
+                polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.policy.encoder_tau)
+                polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
+                obs_z = self.encoder_target(replay_data.observations)
                 # Compute actor loss
                 actor_loss = -self.critic.q1_forward(obs_z, self.actor(obs_z)).mean()
                 actor_losses.append(actor_loss.item())
@@ -152,11 +168,9 @@ class SRLTD3(TD3):
 
                 polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
                 polyak_update(self.actor.parameters(), self.actor_target.parameters(), self.tau)
-                polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.policy.encoder_tau)
                 # Copy running stats, see GH issue #996
                 polyak_update(self.critic_batch_norm_stats, self.critic_batch_norm_stats_target, 1.0)
                 polyak_update(self.actor_batch_norm_stats, self.actor_batch_norm_stats_target, 1.0)
-                polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
 
             if self._n_updates % 1000 == 0:
                 # Mutual Information to assess latent features' impact
@@ -174,6 +188,8 @@ class SRLTD3(TD3):
             self.logger.record("train/l2_loss", np.mean(l2_losses))
         if len(mi_min_values) > 0:
             self.logger.record("train/mutual_information_min", np.mean(mi_min_values))
+        if len(p_values) > 0:
+            self.logger.record("train/probability_success", np.mean(p_values))
 
     def _excluded_save_params(self) -> list[str]:
         return super()._excluded_save_params(
