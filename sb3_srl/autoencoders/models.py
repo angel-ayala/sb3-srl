@@ -134,19 +134,24 @@ class AEModel:
     def set_stopper(self, patience, threshold=0.):
         self.stop = EarlyStopper(patience, threshold)
 
+    def update_stopper(self, loss):
+        if self.stop is not None:
+            self.stop(loss)
+    
+    @property
+    def must_update(self):
+        return not self.stop.stop
+
     def make_target(self):
         self.encoder_target = copy.deepcopy(self.encoder)
         self.encoder_target.train(False)
 
     def update_representation(self, loss):
-        must_update = True
-        if self.stop is not None:
-            must_update = not self.stop(loss)
-        if must_update:
+        if self.must_update:
             self.encoder_optim_zero_grad()
             self.decoder_optim_zero_grad()
         loss.backward()
-        if must_update:
+        if self.must_update:
             self.encoder_optim_step()
             self.decoder_optim_step()
 
@@ -184,6 +189,7 @@ class VectorModel(AEModel):
         # reconstruct normalized observation
         obs_norm = th.FloatTensor(self.preprocess(observations.cpu()))
         rec_loss = obs_reconstruction_loss(rec_obs, obs_norm.to(rec_obs.device))
+        self.update_stopper(rec_loss)
         # add L2 penalty on latent representation
         latent_loss = latent_l2_loss(obs_z)
         loss = rec_loss + latent_loss * self.decoder_latent_lambda
@@ -255,6 +261,7 @@ class VectorSPRModel(AEModel):
         # L2 over Z
         # return loss, None
         latent_loss = latent_l2_loss(z_t1)
+        self.update_stopper(latent_loss)
         loss = contrastive + latent_loss * self.decoder_latent_lambda
         return loss, latent_loss
 
@@ -291,6 +298,7 @@ class VectorTargetDistModel(VectorModel):
         obs_norm[:, 12] = obs_ori
         obs_norm[:, 13:] = obs_dist_norm
         rec_loss = obs_reconstruction_loss(rec_obs, obs_norm.to(rec_obs.device))
+        self.update_stopper(rec_loss)
         # add L2 penalty on latent representation
         latent_loss = latent_l2_loss(obs_z)
         loss = rec_loss + latent_loss * self.decoder_latent_lambda
@@ -364,6 +372,7 @@ class AdvantageModel(AEModel):
         # obs_code = self.decoder.forward_proj(obs_z1)
         # contrastive = info_nce_loss(obs_code, adv_code)
         latent_loss = latent_l2_loss(obs_z1)
+        self.update_stopper(latent_loss)
         loss = contrastive + latent_loss * self.decoder_latent_lambda
         return loss, latent_loss
         
