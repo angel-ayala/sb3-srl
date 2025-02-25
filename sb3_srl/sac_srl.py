@@ -145,6 +145,8 @@ class SRLSAC(SAC):
 
             # Get current Q-values estimates for each critic network
             # using action from the replay buffer
+            if 'SPR' in self.policy.ae_model.type:
+                obs_z = self.encoder(replay_data.observations)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
             # Compute critic loss
@@ -152,11 +154,6 @@ class SRLSAC(SAC):
             assert isinstance(critic_loss, th.Tensor)  # for type checker
             critic_losses.append(critic_loss.item())  # type: ignore[union-attr]
             adv_val = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
-
-            # Optimize the critic
-            self.critic.optimizer.zero_grad()
-            critic_loss.backward()
-            self.critic.optimizer.step()
 
             # Compute reconstruction loss
             if 'Advantage' in self.policy.ae_model.type:
@@ -169,11 +166,28 @@ class SRLSAC(SAC):
             if latent_loss is not None:
                 l2_losses.append(latent_loss.item())
             ae_losses.append(rep_loss.item())
-            self.policy.ae_model.update_representation(rep_loss)
+            
+            if 'SPR' in self.policy.ae_model.type:
+                # Optimize the critics and representation
+                self.critic.optimizer.zero_grad()
+                self.policy.ae_model.update_representation(critic_loss + rep_loss)
+                self.critic.optimizer.step()
+            else:
+                self.critic.optimizer.zero_grad()
+                critic_loss.backward() # Optimize the critics first
+                self.critic.optimizer.step()
+                # then representation
+                self.policy.ae_model.update_representation(rep_loss)
 
             # Compute actor loss
             # Alternative: actor_loss = th.mean(log_prob - qf1_pi)
             # Min over all critic networks
+            # Update target first
+            polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.policy.encoder_tau)
+            polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
+            
+            with th.no_grad():
+                obs_z = self.encoder_target(replay_data.observations)
             q_values_pi = th.cat(self.critic(obs_z, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
             actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
@@ -187,10 +201,8 @@ class SRLSAC(SAC):
             # Update target networks
             if gradient_step % self.target_update_interval == 0:
                 polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
-                polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.policy.encoder_tau)
                 # Copy running stats, see GH issue #996
                 polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
-                polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
 
             if gradient_step % 1000 == 0:
                 # Mutual Information to assess latent features' impact

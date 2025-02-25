@@ -101,6 +101,7 @@ class SRLTD3(TD3):
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
 
             with th.no_grad():
+                obs_z = self.encoder_target(replay_data.observations)
                 next_obs_z = self.encoder_target(replay_data.next_observations)
                 # Select action according to policy and add clipped noise
                 noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
@@ -114,11 +115,8 @@ class SRLTD3(TD3):
 
             # Get current Q-values estimates for each critic network
             if 'SPR' in self.policy.ae_model.type:
-                obs = self.encoder(replay_data.observations)
-            else:
-                with th.no_grad():
-                    obs = self.encoder_target(replay_data.observations)
-            current_q_values = self.critic(obs, replay_data.actions)
+                obs_z = self.encoder(replay_data.observations)                    
+            current_q_values = self.critic(obs_z, replay_data.actions)
 
             # Compute critic loss
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
@@ -156,7 +154,7 @@ class SRLTD3(TD3):
                 # update representations
                 polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.policy.encoder_tau)
                 polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
-                obs_z = self.encoder_target(replay_data.observations)
+                obs_z = self.encoder_target(replay_data.observations).detach()
                 # Compute actor loss
                 actor_loss = -self.critic.q1_forward(obs_z, self.actor(obs_z)).mean()
                 actor_losses.append(actor_loss.item())
@@ -175,7 +173,7 @@ class SRLTD3(TD3):
             if self._n_updates % 1000 == 0:
                 # Mutual Information to assess latent features' impact
                 # q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
-                mi_min = compute_mutual_information(obs_z, adv_val.detach())
+                mi_min = compute_mutual_information(obs_z, adv_val)
                 mi_min_values.append(mi_min)
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
