@@ -130,14 +130,14 @@ class AEModel:
             return self.scaler.transform(observations)
         else:
             return observations
-    
+
     def set_stopper(self, patience, threshold=0.):
         self.stop = EarlyStopper(patience, threshold)
 
     def update_stopper(self, loss):
         if self.stop is not None:
             self.stop(loss)
-    
+
     @property
     def must_update(self):
         return not self.stop.stop
@@ -219,7 +219,7 @@ class VectorSPRModel(AEModel):
     def fit_scaler(self, values=None):
         # not required
         pass
-    
+
     def project_target(self, z):
         h_fc = self.encoder_target.projection(z)
         return th.tanh(h_fc)
@@ -328,39 +328,27 @@ class AdvantageModel(AEModel):
         # not required
         pass
 
-    def compute_probability_of_success(self, current_q_values, target_q_values, epsilon=1e-6):
+    def compute_probability_of_success(self, Q_sa, V_s):
         """
-        Computes the probability of success based on TD3 critics.
-        
+        Computes the probability of success loss for optimization.
+
         Args:
-            current_q_values (tuple): Tuple of tensors (Q1, Q2) representing the current Q-values from both critics.
-            target_q_values (tuple): Tuple of tensors (Q1_target, Q2_target) representing target Q-values.
-            epsilon (float): Small constant for numerical stability.
-        
+            Q_sa (tuple): (Q1, Q2) from critics.
+            V_s (tuple): (Q1_target, Q2_target) from target critics.
+
         Returns:
-            torch.Tensor: Probability of success for each action in the batch.
+            torch.Tensor: Loss to maximize probability of success.
         """
-        # Unpack critic values
-        Q1, Q2 = current_q_values
-        # Q1_target, Q2_target = target_q_values
-    
-        # Conservative Q-value estimate
-        Q_min = th.min(Q1, Q2).detach()
-    
-        # Estimate value function V(s)
-        # V_s = th.min(Q1_target, Q2_target)  # Conservative estimate from target critics
-    
-        # Compute probability of success
-        # prob_success = th.log10((Q_min + epsilon) / (target_q_values.detach() + epsilon))
-        prob_success = (Q_min + epsilon) / (target_q_values.detach() + epsilon)
-    
+        # Compute probability of success values
+        ratio = V_s.squeeze() / (Q_sa + 1e-6)  # Avoid division by zero
+        prob_success = 1 - th.sigmoid(ratio * 10.)
         return prob_success
-    
+
     def compute_success_loss(self, observations, actions, current_q_values, target_q_values):
         success_prob = self.compute_probability_of_success(current_q_values, target_q_values)
         with th.no_grad():
             obs_z = self.encoder(observations)
-        success_hat = self.decoder.forward_prob(obs_z, actions)
+        success_hat = self.decoder.forward_prob(obs_z, actions).squeeze()
         return F.mse_loss(success_prob, success_hat)
 
     def compute_representation_loss(self, observations, actions, next_observations):
@@ -375,9 +363,9 @@ class AdvantageModel(AEModel):
         self.update_stopper(latent_loss)
         loss = contrastive + latent_loss * self.decoder_latent_lambda
         return loss, latent_loss
-        
+
         # obs_z1 = self.encoder(next_observations)
-        
+
         # reconstruct normalized observation
         # obs_norm = th.FloatTensor(self.preprocess(observations.cpu()))
         # rec_loss = obs_reconstruction_loss(rec_obs, obs_norm.to(rec_obs.device))

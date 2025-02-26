@@ -188,6 +188,7 @@ class SRLSAC(SAC):
             
             with th.no_grad():
                 obs_z = self.encoder_target(replay_data.observations)
+            actions_pi, log_prob = self.actor.action_log_prob(obs_z)
             q_values_pi = th.cat(self.critic(obs_z, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
             actor_loss = (ent_coef * log_prob - min_qf_pi).mean()

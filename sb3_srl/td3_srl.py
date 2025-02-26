@@ -94,7 +94,9 @@ class SRLTD3(TD3):
         actor_losses, critic_losses = [], []
         ae_losses, l2_losses = [], []
         mi_min_values = []
-        p_values = []
+        p_values, p_losses = [], []
+        q_log, next_q_log = [], []
+        adv_values = []
         for _ in range(gradient_steps):
             self._n_updates += 1
             # Sample replay buffer
@@ -122,14 +124,20 @@ class SRLTD3(TD3):
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             assert isinstance(critic_loss, th.Tensor)
             critic_losses.append(critic_loss.item())
-            adv_val = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
+            Q_min = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
+            q_log.append(Q_min.mean())
+            next_q_log.append(next_q_values.mean())
+            # adv = Q_min - next_q_values  # No division
+            # adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
             if 'Advantage' in self.policy.ae_model.type:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
-                p_loss = self.policy.ae_model.compute_success_loss(replay_data.observations, replay_data.actions, current_q_values, next_q_values)
-                p_values.append(p_loss.item())
+                p_loss = self.policy.ae_model.compute_success_loss(replay_data.observations, replay_data.actions, Q_min, next_q_values)
+                p_losses.append(p_loss.item())
+                p_value = self.policy.ae_model.compute_probability_of_success(Q_min, next_q_values)
+                p_values.append(p_value.mean().item())
                 rep_loss += p_loss * 1e-3
             else:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
@@ -173,7 +181,7 @@ class SRLTD3(TD3):
             if self._n_updates % 1000 == 0:
                 # Mutual Information to assess latent features' impact
                 # q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
-                mi_min = compute_mutual_information(obs_z, adv_val)
+                mi_min = compute_mutual_information(obs_z, Q_min)
                 mi_min_values.append(mi_min)
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
@@ -188,6 +196,9 @@ class SRLTD3(TD3):
             self.logger.record("train/mutual_information_min", np.mean(mi_min_values))
         if len(p_values) > 0:
             self.logger.record("train/probability_success", np.mean(p_values))
+        if len(p_losses) > 0:
+            self.logger.record("train/probability_success_loss", np.mean(p_losses))
+        # self.logger.record("train/advantage_values", np.mean(adv_values))
 
     def _excluded_save_params(self) -> list[str]:
         return super()._excluded_save_params(
