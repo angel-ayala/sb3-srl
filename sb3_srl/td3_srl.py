@@ -130,11 +130,10 @@ class SRLTD3(TD3):
             if 'Advantage' in self.policy.ae_model.type:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
-                p_loss = self.policy.ae_model.compute_success_loss(replay_data.observations, replay_data.actions, Q_min, next_q_values)
+                p_loss, p_value = self.policy.ae_model.compute_success_loss(replay_data.observations, replay_data.actions, Q_min, next_q_values)
                 p_losses.append(p_loss.item())
-                p_value = self.policy.ae_model.compute_probability_of_success(Q_min, next_q_values)
-                p_values.append(p_value.mean().item())
-                rep_loss += p_loss * 1e-3
+                p_values.append(p_value.item())
+                rep_loss += p_loss * 1e-3 + (1 - p_value)
             else:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)

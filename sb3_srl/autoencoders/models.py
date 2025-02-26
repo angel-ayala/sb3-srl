@@ -328,20 +328,22 @@ class AdvantageModel(AEModel):
         # not required
         pass
 
-    def compute_probability_of_success(self, Q_sa, V_s):
+    def compute_probability_of_success(self, Q_sa, V_s_prime):
         """
         Computes the probability of success loss for optimization.
 
         Args:
             Q_sa (tuple): (Q1, Q2) from critics.
-            V_s (tuple): (Q1_target, Q2_target) from target critics.
+            V_s_prime (tuple): (Q1_target, Q2_target) from target critics.
 
         Returns:
             torch.Tensor: Loss to maximize probability of success.
         """
         # Compute probability of success values
-        ratio = V_s.squeeze() / (Q_sa + 1e-6)  # Avoid division by zero
-        prob_success = 1 - th.sigmoid(ratio * 10.)
+        # ratio = V_s_prime.squeeze() / (Q_sa + 1e-6)  # Avoid division by zero
+        # prob_success = 1 - th.sigmoid(ratio * 10.)
+        ratio =  Q_sa / (V_s_prime.squeeze() + 1e-6)  # Avoid division by zero
+        prob_success = th.sigmoid(ratio - 1.)
         return prob_success
 
     def compute_success_loss(self, observations, actions, current_q_values, target_q_values):
@@ -349,7 +351,7 @@ class AdvantageModel(AEModel):
         with th.no_grad():
             obs_z = self.encoder(observations)
         success_hat = self.decoder.forward_prob(obs_z, actions).squeeze()
-        return F.mse_loss(success_prob, success_hat)
+        return F.mse_loss(success_prob, success_hat), success_prob.mean()
 
     def compute_representation_loss(self, observations, actions, next_observations):
         # Compute reconstruction loss
