@@ -96,6 +96,7 @@ class SRLSAC(SAC):
         actor_losses, critic_losses = [], []
         ae_losses, l2_losses = [], []
         mi_min_values = []
+        p_values, p_losses = [], []
         for gradient_step in range(gradient_steps):
             # Sample replay buffer
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
@@ -153,13 +154,17 @@ class SRLSAC(SAC):
             critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             assert isinstance(critic_loss, th.Tensor)  # for type checker
             critic_losses.append(critic_loss.item())  # type: ignore[union-attr]
-            adv_val = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
+            Q_min = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
 
             # Compute reconstruction loss
             if 'Advantage' in self.policy.ae_model.type:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
-                    replay_data.observations, replay_data.actions, replay_data.next_observations,
-                    adv_val.unsqueeze(1))
+                    replay_data.observations, replay_data.actions, replay_data.next_observations)
+                p_loss = self.policy.ae_model.compute_success_loss(replay_data.observations, replay_data.actions, Q_min, next_q_values)
+                p_losses.append(p_loss.item())
+                p_value = self.policy.ae_model.compute_probability_of_success(Q_min, next_q_values)
+                p_values.append(p_value.mean().item())
+                rep_loss += p_loss * 1e-3
             else:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
@@ -187,9 +192,9 @@ class SRLSAC(SAC):
             polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
             
             with th.no_grad():
-                obs_z = self.encoder_target(replay_data.observations)
-            actions_pi, log_prob = self.actor.action_log_prob(obs_z)
-            q_values_pi = th.cat(self.critic(obs_z, actions_pi), dim=1)
+                _obs_z = self.encoder_target(replay_data.observations)
+            actions_pi, log_prob = self.actor.action_log_prob(_obs_z)
+            q_values_pi = th.cat(self.critic(_obs_z, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
             actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
             actor_losses.append(actor_loss.item())
@@ -207,7 +212,7 @@ class SRLSAC(SAC):
 
             if gradient_step % 1000 == 0:
                 # Mutual Information to assess latent features' impact
-                mi_min = compute_mutual_information(obs_z, adv_val)
+                mi_min = compute_mutual_information(obs_z, Q_min)
                 mi_min_values.append(mi_min)
 
         self._n_updates += gradient_steps
@@ -224,6 +229,10 @@ class SRLSAC(SAC):
             self.logger.record("train/l2_loss", np.mean(l2_losses))
         if len(mi_min_values) > 0:
             self.logger.record("train/mutual_information_min", np.mean(mi_min_values))
+        if len(p_values) > 0:
+            self.logger.record("train/probability_success", np.mean(p_values))
+        if len(p_losses) > 0:
+            self.logger.record("train/probability_success_loss", np.mean(p_losses))
 
     def _excluded_save_params(self) -> list[str]:
         return super()._excluded_save_params(

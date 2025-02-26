@@ -95,8 +95,6 @@ class SRLTD3(TD3):
         ae_losses, l2_losses = [], []
         mi_min_values = []
         p_values, p_losses = [], []
-        q_log, next_q_log = [], []
-        adv_values = []
         for _ in range(gradient_steps):
             self._n_updates += 1
             # Sample replay buffer
@@ -125,8 +123,6 @@ class SRLTD3(TD3):
             assert isinstance(critic_loss, th.Tensor)
             critic_losses.append(critic_loss.item())
             Q_min = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
-            q_log.append(Q_min.mean())
-            next_q_log.append(next_q_values.mean())
             # adv = Q_min - next_q_values  # No division
             # adv_values.append(adv.mean().item())
 
@@ -162,9 +158,9 @@ class SRLTD3(TD3):
                 # update representations
                 polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.policy.encoder_tau)
                 polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
-                obs_z = self.encoder_target(replay_data.observations).detach()
+                _obs_z = self.encoder_target(replay_data.observations).detach()
                 # Compute actor loss
-                actor_loss = -self.critic.q1_forward(obs_z, self.actor(obs_z)).mean()
+                actor_loss = -self.critic.q1_forward(_obs_z, self.actor(_obs_z)).mean()
                 actor_losses.append(actor_loss.item())
 
                 # Optimize the actor
