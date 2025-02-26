@@ -39,9 +39,8 @@ class SRLTD3Policy(TD3Policy):
         self.ae_model.adam_optimizer(ae_params['encoder_lr'],
                                      ae_params['decoder_lr'])
         self.ae_model.set_stopper(ae_params['encoder_steps'])
-        if 'Advantage' not in ae_type:
-            self.ae_model.fit_scaler([self.observation_space.low,
-                                      self.observation_space.high])
+        self.ae_model.fit_scaler([self.observation_space.low,
+                                  self.observation_space.high])
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
@@ -95,6 +94,7 @@ class SRLTD3(TD3):
         ae_losses, l2_losses = [], []
         mi_min_values = []
         p_values, p_losses = [], []
+        adv_values = []
         for _ in range(gradient_steps):
             self._n_updates += 1
             # Sample replay buffer
@@ -123,17 +123,17 @@ class SRLTD3(TD3):
             assert isinstance(critic_loss, th.Tensor)
             critic_losses.append(critic_loss.item())
             Q_min = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
-            # adv = Q_min - next_q_values  # No division
-            # adv_values.append(adv.mean().item())
+            adv = Q_min - next_q_values.squeeze()  # No division
+            adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
             if 'Advantage' in self.policy.ae_model.type:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
-                p_loss, p_value = self.policy.ae_model.compute_success_loss(replay_data.observations, replay_data.actions, Q_min, next_q_values)
+                p_loss, p_value = self.policy.ae_model.compute_success_loss(obs_z, replay_data.actions, adv, next_q_values)
                 p_losses.append(p_loss.item())
                 p_values.append(p_value.item())
-                rep_loss += p_loss * 1e-3 + (1 - p_value)
+                rep_loss += p_loss * 1e-3 + (1 - p_value) * 0.1
             else:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
@@ -142,13 +142,13 @@ class SRLTD3(TD3):
             ae_losses.append(rep_loss.item())
 
             if 'SPR' in self.policy.ae_model.type:
-                # Optimize the critics
+                # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
                 self.policy.ae_model.update_representation(critic_loss + rep_loss)
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()
-                critic_loss.backward()
+                critic_loss.backward() # Optimize the critics first
                 self.critic.optimizer.step()
                 self.policy.ae_model.update_representation(rep_loss)
 
@@ -175,7 +175,6 @@ class SRLTD3(TD3):
 
             if self._n_updates % 1000 == 0:
                 # Mutual Information to assess latent features' impact
-                # q_min, _ = th.min(th.cat(current_q_values, dim=1), dim=1)
                 mi_min = compute_mutual_information(obs_z, Q_min)
                 mi_min_values.append(mi_min)
 
@@ -193,7 +192,7 @@ class SRLTD3(TD3):
             self.logger.record("train/probability_success", np.mean(p_values))
         if len(p_losses) > 0:
             self.logger.record("train/probability_success_loss", np.mean(p_losses))
-        # self.logger.record("train/advantage_values", np.mean(adv_values))
+        self.logger.record("train/advantage_values", np.mean(adv_values))
 
     def _excluded_save_params(self) -> list[str]:
         return super()._excluded_save_params(

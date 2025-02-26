@@ -328,29 +328,29 @@ class AdvantageModel(AEModel):
         # not required
         pass
 
-    def compute_probability_of_success(self, Q_sa, V_s_prime):
+    def compute_probability_of_success(self, A_sa, V_s_prime):
         """
         Computes the probability of success loss for optimization.
 
         Args:
-            Q_sa (tuple): (Q1, Q2) from critics.
+            A_sa (tuple): (Q1, Q2) from critics.
             V_s_prime (tuple): (Q1_target, Q2_target) from target critics.
 
         Returns:
             torch.Tensor: Loss to maximize probability of success.
         """
         # Compute probability of success values
+        # originally 0.5 * log(Q/R^T) + 1 (clipped 0,1)
         # ratio = V_s_prime.squeeze() / (Q_sa + 1e-6)  # Avoid division by zero
-        # prob_success = 1 - th.sigmoid(ratio * 10.)
-        ratio =  Q_sa / (V_s_prime.squeeze() + 1e-6)  # Avoid division by zero
-        prob_success = th.sigmoid(ratio - 1.)
+        # prob_success = th.sigmoid(ratio - 1.)
+        ratio = A_sa.squeeze() / (V_s_prime.squeeze() + 1e-6)  # Avoid division by zero
+        # ratio = th.log(1 + ratio)
+        prob_success = th.sigmoid(ratio)
         return prob_success
 
-    def compute_success_loss(self, observations, actions, current_q_values, target_q_values):
+    def compute_success_loss(self, observations_z, actions, current_q_values, target_q_values):
         success_prob = self.compute_probability_of_success(current_q_values, target_q_values)
-        with th.no_grad():
-            obs_z = self.encoder(observations)
-        success_hat = self.decoder.forward_prob(obs_z, actions).squeeze()
+        success_hat = self.decoder.forward_prob(observations_z, actions).squeeze()
         return F.mse_loss(success_prob, success_hat), success_prob.mean()
 
     def compute_representation_loss(self, observations, actions, next_observations):

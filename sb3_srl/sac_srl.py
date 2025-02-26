@@ -97,6 +97,7 @@ class SRLSAC(SAC):
         ae_losses, l2_losses = [], []
         mi_min_values = []
         p_values, p_losses = [], []
+        adv_values = []
         for gradient_step in range(gradient_steps):
             # Sample replay buffer
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
@@ -155,23 +156,24 @@ class SRLSAC(SAC):
             assert isinstance(critic_loss, th.Tensor)  # for type checker
             critic_losses.append(critic_loss.item())  # type: ignore[union-attr]
             Q_min = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
+            adv = Q_min - next_q_values.squeeze()  # No division
+            adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
             if 'Advantage' in self.policy.ae_model.type:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
-                p_loss = self.policy.ae_model.compute_success_loss(replay_data.observations, replay_data.actions, Q_min, next_q_values)
+                p_loss, p_value = self.policy.ae_model.compute_success_loss(obs_z, replay_data.actions, adv, next_q_values)
                 p_losses.append(p_loss.item())
-                p_value = self.policy.ae_model.compute_probability_of_success(Q_min, next_q_values)
-                p_values.append(p_value.mean().item())
-                rep_loss += p_loss * 1e-3
+                p_values.append(p_value.item())
+                rep_loss += p_loss * 1e-3 + (1 - p_value) * 0.1
             else:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
             if latent_loss is not None:
                 l2_losses.append(latent_loss.item())
             ae_losses.append(rep_loss.item())
-            
+
             if 'SPR' in self.policy.ae_model.type:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
@@ -233,6 +235,7 @@ class SRLSAC(SAC):
             self.logger.record("train/probability_success", np.mean(p_values))
         if len(p_losses) > 0:
             self.logger.record("train/probability_success_loss", np.mean(p_losses))
+        self.logger.record("train/advantage_values", np.mean(adv_values))
 
     def _excluded_save_params(self) -> list[str]:
         return super()._excluded_save_params(
