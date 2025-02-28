@@ -139,6 +139,7 @@ class SRLSAC(SAC):
                 next_actions, next_log_prob = self.actor.action_log_prob(next_obs_z)
                 # Compute the next Q values: min over all critics targets
                 next_q_values = th.cat(self.critic_target(next_obs_z, next_actions), dim=1)
+                next_v_values, _ = th.max(next_q_values, dim=1, keepdim=True)
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
                 # add entropy term
                 next_q_values = next_q_values - ent_coef * next_log_prob.reshape(-1, 1)
@@ -147,7 +148,7 @@ class SRLSAC(SAC):
 
             # Get current Q-values estimates for each critic network
             # using action from the replay buffer
-            if 'SPR' in self.policy.ae_model.type:
+            if self.policy.ae_model.joint_optimize:
                 obs_z = self.encoder(replay_data.observations)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
@@ -155,15 +156,16 @@ class SRLSAC(SAC):
             critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             assert isinstance(critic_loss, th.Tensor)  # for type checker
             critic_losses.append(critic_loss.item())  # type: ignore[union-attr]
+            v_values = th.max(th.cat(current_q_values, dim=1), dim=1)[0].detach()
             Q_min = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
-            adv = Q_min - next_q_values.squeeze()  # No division
+            adv = Q_min - v_values.squeeze()  # No division
             adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
             if 'Advantage' in self.policy.ae_model.type:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
-                p_loss, p_value = self.policy.ae_model.compute_success_loss(obs_z, replay_data.actions, adv, next_q_values)
+                p_loss, p_value = self.policy.ae_model.compute_success_loss(obs_z, replay_data.actions, Q_min, next_v_values)
                 p_losses.append(p_loss.item())
                 p_values.append(p_value.item())
                 rep_loss += p_loss * 1e-3 + (1 - p_value) * 0.1
@@ -174,10 +176,10 @@ class SRLSAC(SAC):
                 l2_losses.append(latent_loss.item())
             ae_losses.append(rep_loss.item())
 
-            if 'SPR' in self.policy.ae_model.type:
+            if self.policy.ae_model.joint_optimize:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
-                self.policy.ae_model.update_representation(critic_loss + rep_loss)
+                self.policy.ae_model.update_representation(critic_loss + 2. * rep_loss)
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()

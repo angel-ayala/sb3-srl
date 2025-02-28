@@ -53,6 +53,7 @@ class AEModel:
         self.decoder = None
         self.scaler = None
         self.stop = None
+        self.joint_optimize = False
 
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
@@ -206,6 +207,7 @@ class VectorSPRModel(AEModel):
                  encoder_only: bool = False,
                  decoder_latent_lambda: float = 1e-6):
         super(VectorSPRModel, self).__init__('VectorSPR')
+        self.joint_optimize = True
         self.encoder = VectorEncoder(vector_shape, latent_dim, hidden_dim,
                                      num_layers)
         if not encoder_only:
@@ -315,6 +317,7 @@ class AdvantageModel(AEModel):
                  encoder_only: bool = False,
                  decoder_latent_lambda: float = 1e-6):
         super(AdvantageModel, self).__init__('Advantage')
+        self.joint_optimize = True
         self.encoder = VectorEncoder(vector_shape, latent_dim, hidden_dim,
                                      num_layers)
         if not encoder_only:
@@ -328,12 +331,12 @@ class AdvantageModel(AEModel):
         # not required
         pass
 
-    def compute_probability_of_success(self, A_sa, V_s_prime):
+    def compute_probability_of_success(self, Q_sa, V_s_prime):
         """
         Computes the probability of success loss for optimization.
 
         Args:
-            A_sa (tuple): (Q1, Q2) from critics.
+            Q_sa (tuple): (Q1, Q2) from critics.
             V_s_prime (tuple): (Q1_target, Q2_target) from target critics.
 
         Returns:
@@ -341,11 +344,10 @@ class AdvantageModel(AEModel):
         """
         # Compute probability of success values
         # originally 0.5 * log(Q/R^T) + 1 (clipped 0,1)
-        # ratio = V_s_prime.squeeze() / (Q_sa + 1e-6)  # Avoid division by zero
-        # prob_success = th.sigmoid(ratio - 1.)
-        ratio = A_sa.squeeze() / (V_s_prime.squeeze() + 1e-6)  # Avoid division by zero
-        # ratio = th.log(1 + ratio)
-        prob_success = th.sigmoid(ratio)
+        ratio = Q_sa.squeeze() / (V_s_prime.squeeze() + 1e-6)  # Avoid division by zero
+        prob_success = th.sigmoid(ratio * 9.)
+        # ratio = th.log(th.abs(Q_sa.squeeze())) - th.log(th.abs(V_s_prime.squeeze()))  # Avoid division by zero
+        # prob_success = th.sigmoid(ratio)
         return prob_success
 
     def compute_success_loss(self, observations_z, actions, current_q_values, target_q_values):

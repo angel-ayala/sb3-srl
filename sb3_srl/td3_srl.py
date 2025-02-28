@@ -27,8 +27,7 @@ from sb3_srl.autoencoders.utils import compute_mutual_information
 class SRLTD3Policy(TD3Policy):
     def __init__(self, *args,
                  ae_type: str = 'Vector', ae_params: dict = {},
-                 encoder_tau: float = 0.999,
-                 **kwargs):
+                 encoder_tau: float = 0.999, **kwargs):
         self.features_dim = ae_params['latent_dim']
         super(SRLTD3Policy, self).__init__(*args, **kwargs)
         self.make_autencoder(ae_type, ae_params)
@@ -110,27 +109,29 @@ class SRLTD3(TD3):
 
                 # Compute the next Q-values: min over all critics targets
                 next_q_values = th.cat(self.critic_target(next_obs_z, next_actions), dim=1)
+                next_v_values, _ = th.max(next_q_values, dim=1, keepdim=True)
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
             # Get current Q-values estimates for each critic network
-            if 'SPR' in self.policy.ae_model.type:
-                obs_z = self.encoder(replay_data.observations)                    
+            if self.policy.ae_model.joint_optimize:
+                obs_z = self.encoder(replay_data.observations)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
             # Compute critic loss
             critic_loss = sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
             assert isinstance(critic_loss, th.Tensor)
             critic_losses.append(critic_loss.item())
+            v_values = th.max(th.cat(current_q_values, dim=1), dim=1)[0].detach()
             Q_min = th.min(th.cat(current_q_values, dim=1), dim=1)[0].detach()
-            adv = Q_min - next_q_values.squeeze()  # No division
+            adv = Q_min - v_values.squeeze()  # No division
             adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
             if 'Advantage' in self.policy.ae_model.type:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
-                p_loss, p_value = self.policy.ae_model.compute_success_loss(obs_z, replay_data.actions, adv, next_q_values)
+                p_loss, p_value = self.policy.ae_model.compute_success_loss(obs_z, replay_data.actions, Q_min, next_v_values)
                 p_losses.append(p_loss.item())
                 p_values.append(p_value.item())
                 rep_loss += p_loss * 1e-3 + (1 - p_value) * 0.1
@@ -141,10 +142,10 @@ class SRLTD3(TD3):
                 l2_losses.append(latent_loss.item())
             ae_losses.append(rep_loss.item())
 
-            if 'SPR' in self.policy.ae_model.type:
+            if self.policy.ae_model.joint_optimize:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
-                self.policy.ae_model.update_representation(critic_loss + rep_loss)
+                self.policy.ae_model.update_representation(critic_loss + 2. * rep_loss)
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()
