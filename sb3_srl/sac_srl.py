@@ -20,26 +20,17 @@ from stable_baselines3 import SAC
 from stable_baselines3.sac.policies import Actor
 from stable_baselines3.sac.policies import SACPolicy
 
-from sb3_srl.autoencoders import instance_autoencoder
-from sb3_srl.autoencoders.utils import compute_mutual_information
+from sb3_srl.srl import SRLPolicy
+from sb3_srl.srl import SRLAlgorithm
 
 
-class SRLSACPolicy(SACPolicy):
+class SRLSACPolicy(SACPolicy, SRLPolicy):
     def __init__(self, *args,
                  ae_type: str = 'Vector', ae_params: dict = {},
                  encoder_tau: float = 0.999, **kwargs):
         self.features_dim = ae_params['latent_dim']
-        super(SRLSACPolicy, self).__init__(*args, **kwargs)
-        self.make_autencoder(ae_type, ae_params)
-        self.encoder_tau = encoder_tau
-
-    def make_autencoder(self, ae_type, ae_params):
-        self.ae_model = instance_autoencoder(ae_type, ae_params)
-        self.ae_model.adam_optimizer(ae_params['encoder_lr'],
-                                     ae_params['decoder_lr'])
-        self.ae_model.set_stopper(ae_params['encoder_steps'])
-        self.ae_model.fit_scaler([self.observation_space.low,
-                                  self.observation_space.high])
+        SACPolicy.__init__(self, *args, **kwargs)
+        SRLPolicy.__init__(self, ae_type, ae_params, encoder_tau)
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
@@ -52,38 +43,37 @@ class SRLSACPolicy(SACPolicy):
         return ContinuousCritic(**critic_kwargs).to(self.device)
 
     def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
-        # Note: the deterministic deterministic parameter is ignored in the case of TD3.
-        #   Predictions are always deterministic.
-        with th.no_grad():
-            obs_z = self.ae_model.encoder(observation)
-        return self.actor(obs_z)
+        return SRLPolicy._predict(self, observation)
 
-    def set_training_mode(self, mode: bool) -> None:
-        self.actor.set_training_mode(mode)
-        self.critic.set_training_mode(mode)
-        self.ae_model.set_training_mode(mode)
-        self.training = mode
 
-class SRLSAC(SAC):
+class SRLSAC(SAC, SRLAlgorithm):
     def __init__(self, *args, **kwargs):
-        super(SRLSAC, self).__init__(*args, **kwargs)
+        SAC.__init__(self, *args, **kwargs)
 
     def _create_aliases(self) -> None:
-        super()._create_aliases()
-        self.encoder = self.policy.ae_model.encoder
-        self.decoder = self.policy.ae_model.decoder
-        self.encoder_target = self.policy.ae_model.encoder_target
+        SAC._create_aliases(self)
+        SRLAlgorithm._create_aliases(self)
 
     def _setup_model(self) -> None:
-        super()._setup_model()
-        self.policy.ae_model.to(self.device)
-        # Running mean and running var
-        self.encoder_batch_norm_stats = get_parameters_by_name(self.encoder, ["running_"])
-        self.encoder_batch_norm_stats_target = get_parameters_by_name(self.encoder_target, ["running_"])
+        SAC._setup_model(self)
+        SRLAlgorithm._setup_model(self)
+
+    def _excluded_save_params(self) -> list[str]:
+        return SAC._excluded_save_params(self) + \
+            SRLAlgorithm._excluded_save_params(self)
+
+    def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
+        state_dicts1, extra1 = SAC._get_torch_save_params(self)
+        state_dicts2, extra2 = SRLAlgorithm._get_torch_save_params(self)
+        state_dicts = state_dicts1 + state_dicts2
+        extra = extra1 + extra2
+        return state_dicts, extra
 
     def train(self, gradient_steps: int, batch_size: int = 64) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
+        self.policy.logger_append(self.logger, 'train/')
+
         # Update optimizers learning rate
         optimizers = [self.actor.optimizer, self.critic.optimizer]
         if self.ent_coef_optimizer is not None:
@@ -94,8 +84,6 @@ class SRLSAC(SAC):
 
         ent_coef_losses, ent_coefs = [], []
         actor_losses, critic_losses = [], []
-        ae_losses, l2_losses = [], []
-        mi_min_values = []
         p_values, p_losses = [], []
         adv_values = []
         for gradient_step in range(gradient_steps):
@@ -103,8 +91,8 @@ class SRLSAC(SAC):
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
 
             with th.no_grad():
-                obs_z = self.encoder_target(replay_data.observations)
-                next_obs_z = self.encoder_target(replay_data.next_observations)
+                obs_z = self.enc_obs_target(replay_data.observations)
+                next_obs_z = self.enc_obs_target(replay_data.next_observations)
 
             # We need to sample because `log_std` may have changed between two gradient steps
             if self.use_sde:
@@ -148,8 +136,8 @@ class SRLSAC(SAC):
 
             # Get current Q-values estimates for each critic network
             # using action from the replay buffer
-            if self.policy.ae_model.joint_optimize:
-                obs_z = self.encoder(replay_data.observations)
+            if self.policy.rep_model.joint_optimize:
+                obs_z = self.enc_obs(replay_data.observations)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
             # Compute critic loss
@@ -162,39 +150,30 @@ class SRLSAC(SAC):
             adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
-            if 'Advantage' in self.policy.ae_model.type:
-                rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
-                    replay_data.observations, replay_data.actions, replay_data.next_observations)
-                p_loss, p_value = self.policy.ae_model.compute_nll_loss(obs_z, replay_data.actions, Q_min, next_v_values, replay_data.dones)
-                p_losses.append(p_loss.item())
-                p_values.append(p_value.item())
-                rep_loss += p_loss * 1e-3 + (p_value - 1.)
+            if 'SPRI2' in self.policy.rep_model.type:
+                rep_loss = self.policy.rep_model.compute_representation_loss(
+                    replay_data.observations, replay_data.actions, replay_data.next_observations,
+                    Q_min, next_v_values, replay_data.dones)
             else:
-                rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
+                rep_loss = self.policy.rep_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
-            if latent_loss is not None:
-                l2_losses.append(latent_loss.item())
-            ae_losses.append(rep_loss.item())
 
-            if self.policy.ae_model.joint_optimize:
+            if self.policy.rep_model.joint_optimize:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
-                self.policy.ae_model.update_representation(critic_loss + 2. * rep_loss)
+                self.policy.rep_model.update_representation(critic_loss + rep_loss)
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()
                 critic_loss.backward() # Optimize the critics first
                 self.critic.optimizer.step()
-                # then representation
-                self.policy.ae_model.update_representation(rep_loss)
+                self.policy.rep_model.update_representation(rep_loss)
 
             # Compute actor loss
             # Alternative: actor_loss = th.mean(log_prob - qf1_pi)
             # Min over all critic networks
             # Update target first
-            polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.policy.encoder_tau)
-            polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
-            
+            self.update_encoder_target()
             with th.no_grad():
                 _obs_z = self.encoder_target(replay_data.observations)
             actions_pi, log_prob = self.actor.action_log_prob(_obs_z)
@@ -215,9 +194,7 @@ class SRLSAC(SAC):
                 polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
 
             if gradient_step % 1000 == 0:
-                # Mutual Information to assess latent features' impact
-                mi_min = compute_mutual_information(obs_z, Q_min)
-                mi_min_values.append(mi_min)
+                self.policy.rep_model.log_mi(obs_z, Q_min)
 
         self._n_updates += gradient_steps
 
@@ -228,25 +205,4 @@ class SRLSAC(SAC):
         if len(ent_coef_losses) > 0:
             self.logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
 
-        self.logger.record("train/ae_loss", np.mean(ae_losses))
-        if len(l2_losses) > 0:
-            self.logger.record("train/l2_loss", np.mean(l2_losses))
-        if len(mi_min_values) > 0:
-            self.logger.record("train/mutual_information_min", np.mean(mi_min_values))
-        if len(p_values) > 0:
-            self.logger.record("train/probability_success", np.mean(p_values))
-        if len(p_losses) > 0:
-            self.logger.record("train/probability_success_loss", np.mean(p_losses))
         self.logger.record("train/advantage_values", np.mean(adv_values))
-
-    def _excluded_save_params(self) -> list[str]:
-        return super()._excluded_save_params(
-            ) + ["encoder", "decoder", "encoder_target"]  # noqa: RUF005
-
-    def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
-        state_dicts, _ = super()._get_torch_save_params()
-        state_dicts += ["policy.ae_model.encoder"]
-        state_dicts += ["policy.ae_model.encoder_optim"]
-        state_dicts += ["policy.ae_model.decoder"]
-        state_dicts += ["policy.ae_model.decoder_optim"]
-        return state_dicts, []
