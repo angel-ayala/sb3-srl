@@ -344,16 +344,26 @@ class AdvantageModel(AEModel):
         """
         # Compute probability of success values
         # originally 0.5 * log(Q/R^T) + 1 (clipped 0,1)
-        ratio = Q_sa.squeeze() / (V_s_prime.squeeze() + 1e-6)  # Avoid division by zero
+        ratio = Q_sa.squeeze() / (V_s_prime.squeeze().abs() + 1e-6)  # Avoid division by zero
         prob_success = th.sigmoid(ratio * 9.)
-        # ratio = th.log(th.abs(Q_sa.squeeze())) - th.log(th.abs(V_s_prime.squeeze()))  # Avoid division by zero
-        # prob_success = th.sigmoid(ratio)
-        return prob_success
+        return prob_success.unsqueeze(1)
 
-    def compute_success_loss(self, observations_z, actions, current_q_values, target_q_values):
-        success_prob = self.compute_probability_of_success(current_q_values, target_q_values)
-        success_hat = self.decoder.forward_prob(observations_z, actions).squeeze()
+    def compute_success_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
+        success_target = self.compute_probability_of_success(current_q_values, next_v_values)
+        success_prob = success_target * (1.  - dones)  #  final states probability = 0
+        success_hat = self.decoder.forward_prob(observations_z, actions)
         return F.mse_loss(success_prob, success_hat), success_prob.mean()
+
+    def compute_nll_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
+        y_success = self.compute_probability_of_success(current_q_values, next_v_values)
+        y_true = y_success * (1.  - dones)
+        y_hat = self.decoder.forward_prob(observations_z, actions)
+
+        y_true = th.clamp(y_true, 0.0001, 0.9999)
+        y_hat = th.clamp(y_hat, 0.0001, 0.9999)
+
+        loss = -(y_true * th.log(y_hat) + (1 - y_true) * th.log(1 - y_hat))
+        return loss.mean(), y_true.mean()
 
     def compute_representation_loss(self, observations, actions, next_observations):
         # Compute reconstruction loss

@@ -165,10 +165,10 @@ class SRLSAC(SAC):
             if 'Advantage' in self.policy.ae_model.type:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
-                p_loss, p_value = self.policy.ae_model.compute_success_loss(obs_z, replay_data.actions, Q_min, next_v_values)
+                p_loss, p_value = self.policy.ae_model.compute_nll_loss(obs_z, replay_data.actions, Q_min, next_v_values, replay_data.dones)
                 p_losses.append(p_loss.item())
                 p_values.append(p_value.item())
-                rep_loss += p_loss * 1e-3 + (1 - p_value) * 0.1
+                rep_loss += p_loss * 1e-3 + (p_value - 1.)
             else:
                 rep_loss, latent_loss = self.policy.ae_model.compute_representation_loss(
                     replay_data.observations, replay_data.actions, replay_data.next_observations)
