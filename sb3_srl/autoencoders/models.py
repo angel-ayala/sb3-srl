@@ -333,7 +333,7 @@ class VectorSPRIModel(AEModel):
         # not required
         pass
 
-    def compute_representation_loss(self, observations, actions, next_observations, z_return=False):
+    def compute_representation_loss(self, observations, actions, next_observations):
         # Encode observations
         obs_z = self.encode(observations)
         obs_z1_hat = self.decoder(obs_z, actions)
@@ -347,8 +347,6 @@ class VectorSPRIModel(AEModel):
         self.log("info_nce_loss", contrastive.item())
         self.log("l2_loss", latent_loss.item())
         self.log("rep_loss", loss.item())
-        if z_return:
-            return loss, obs_z
         return loss  # *2.
 
 
@@ -417,5 +415,6 @@ class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
         self.prob_stop(success_loss)
         # ponderate aiming to increase the probability success values
         p_loss = success_loss * self.introspection_lambda * self.must_update_prob + (success_prob.mean() - 1.)
+        # p_loss *= 2.
         return p_loss + VectorSPRIModel.compute_representation_loss(
             self, observations, actions, next_observations)
