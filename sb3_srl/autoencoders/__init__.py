@@ -8,7 +8,8 @@ Created on Thu Feb  6 11:18:39 2025
 from .models import VectorModel
 from .models import VectorSPRModel
 from .models import VectorTargetDistModel
-from .models import AdvantageModel
+from .models import VectorSPRIModel
+from .models import VectorSPRI2Model
 
 
 def instance_autoencoder(ae_type: str, ae_params: dict):
@@ -34,14 +35,22 @@ def instance_autoencoder(ae_type: str, ae_params: dict):
                                          ae_params['num_layers'],
                                          ae_params['encoder_only'],
                                          ae_params['decoder_latent_lambda'])
-    if ae_type == 'Advantage':
-        ae_model = AdvantageModel(ae_params['vector_shape'],
-                                  ae_params['action_shape'],
-                                  ae_params['latent_dim'],
-                                  ae_params['hidden_dim'],
-                                  ae_params['num_layers'],
-                                  ae_params['encoder_only'],
-                                  ae_params['decoder_latent_lambda'])
+    if ae_type == 'VectorSPRI':
+        ae_model = VectorSPRIModel(ae_params['vector_shape'],
+                                   ae_params['action_shape'],
+                                   ae_params['latent_dim'],
+                                   ae_params['hidden_dim'],
+                                   ae_params['num_layers'],
+                                   ae_params['encoder_only'],
+                                   ae_params['decoder_latent_lambda'])
+    if ae_type == 'VectorSPRI2':
+        ae_model = VectorSPRI2Model(ae_params['vector_shape'],
+                                    ae_params['action_shape'],
+                                    ae_params['latent_dim'],
+                                    ae_params['hidden_dim'],
+                                    ae_params['num_layers'],
+                                    ae_params['encoder_only'],
+                                    ae_params['decoder_latent_lambda'])
     # if ae_type == 'VectorDifference':
     #     ae_model = VectorDifferenceModel(ae_params)
     return ae_model

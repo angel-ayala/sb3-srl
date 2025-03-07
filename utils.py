@@ -123,8 +123,10 @@ def parse_srl_args(parser):
                          help='Whether if use the VectorSPR model.')
     arg_srl.add_argument("--model-vector-target-dist", action='store_true',
                          help='Whether if use the VectorTargetDist reconstruction model.')
-    arg_srl.add_argument("--model-advantage", action='store_true',
-                         help='Whether if use the Advantage reconstruction model.')
+    arg_srl.add_argument("--model-vector-spri", action='store_true',
+                         help='Whether if use the VectorSPRI model.')
+    arg_srl.add_argument("--model-vector-spri2", action='store_true',
+                         help='Whether if use the VectorSPRI model.')
     # arg_srl.add_argument("--model-vector-difference", action='store_true',
     #                      help='Whether if use the VectorDifference reconstruction model.')
     # arg_srl.add_argument("--model-rgb", action='store_true',
@@ -298,9 +300,15 @@ def args2ae_config(args, env_params):
         ae_models['VectorTargetDist'] = model_params.copy()
         ae_models['VectorTargetDist'].update({
             'vector_shape': env_params['vector_shape']})
-    if args.model_advantage:
-        ae_models['Advantage'] = model_params.copy()
-        ae_models['Advantage'].update({
+    if args.model_vector_spri:
+        ae_models['VectorSPRI'] = model_params.copy()
+        ae_models['VectorSPRI'].update({
+            'vector_shape': env_params['vector_shape'],
+            'action_shape': env_params['action_shape'],
+            })
+    if args.model_vector_spri2:
+        ae_models['VectorSPRI2'] = model_params.copy()
+        ae_models['VectorSPRI2'].update({
             'vector_shape': env_params['vector_shape'],
             'action_shape': env_params['action_shape'],
             })
@@ -326,8 +334,10 @@ def args2logpath(args, algo):
         path_suffix += '-spr'
     if args.model_vector_target_dist:
         path_suffix += '-tdist'
-    if args.model_advantage:
-        path_suffix += '-adv'
+    if args.model_vector_spri:
+        path_suffix += '-spri'
+    if args.model_vector_spri2:
+        path_suffix += '-spri2'
     # if args.model_vector_difference:
     #     path_suffix += '-diff'
     exp_name = f"{algo}{path_suffix}"

@@ -137,6 +137,21 @@ class VectorDecoder(MLP):
         return out
 
 
+class ProjectionN(nn.Module):
+    def __init__(self, latent_dim: int,
+                 hidden_dim: int,
+                 out_act: nn.Module = nn.Tanh()):
+        super().__init__()
+        self.projection = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, latent_dim),
+            out_act)
+
+    def forward(self, x):
+        return self.projection(x)
+
+
 class VectorSPRDecoder(nn.Module):
     """VectorSPRDecoder for reconstruction function."""
     def __init__(self,
@@ -149,13 +164,6 @@ class VectorSPRDecoder(nn.Module):
             nn.Linear(latent_dim + action_shape[-1], hidden_dim),
             nn.LeakyReLU(),
             nn.Linear(hidden_dim, latent_dim))
-
-        self.projection = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, latent_dim),
-            )
-
         self.pred = nn.Linear(latent_dim, latent_dim)
 
     def transition(self, z, action):
@@ -167,51 +175,39 @@ class VectorSPRDecoder(nn.Module):
         h_fc = self.pred(z_prj)
         return h_fc
 
-    def project(self, z):
-        h_fc = self.projection(z)
-        return th.tanh(h_fc)
-
     def forward(self, z, action):
         code = self.transition(z, action)
-        return self.project(code)
+        return self.predict(code)
 
 
-class AdvantageDecoder(nn.Module):
-    """AdvantageDecoder as representation learning function."""
+class SimpleSPRDecoder(nn.Module):
+    """SimpleSPRDecoder as representation learning function."""
     def __init__(self,
                  vector_shape: tuple,
                  action_shape: tuple,
                  latent_dim: int,
                  hidden_dim: int,
                  num_layers: int = 2):
-        super(AdvantageDecoder, self).__init__()
+        super(SimpleSPRDecoder, self).__init__()
         self.code = nn.Sequential(
             nn.Linear(latent_dim + action_shape[-1], hidden_dim),
             nn.LeakyReLU(),
             nn.Linear(hidden_dim, latent_dim),
-            nn.LayerNorm(latent_dim))
+            nn.LayerNorm(latent_dim),
+            nn.Tanh())
         self.projection = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim), 
+            nn.Linear(latent_dim, hidden_dim),
             nn.LeakyReLU(),
-            nn.Linear(hidden_dim, latent_dim))
-        self.success = nn.Sequential(
-            nn.Linear(latent_dim + action_shape[-1], hidden_dim),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, 1))
-    
-    def forward_prob(self, z, action):
-        prob = self.success(th.cat([z, action], dim=1))
-        return th.sigmoid(prob)
+            nn.Linear(hidden_dim, latent_dim),
+            nn.Tanh())
 
-    def forward_code(self, z, action):
-        code = self.code(th.cat([z, action], dim=1))
-        return th.tanh(code)
+    def forward_z_hat(self, z, action):
+        return self.code(th.cat([z, action], dim=1))
 
     def forward_proj(self, code):
-        proj = self.projection(code)
-        return th.tanh(proj)
+        return self.projection(code)
 
     def forward(self, z, action):
-        code = self.forward_code(z, action)
+        code = self.forward_z_hat(z, action)
         proj = self.forward_proj(code)
         return proj

@@ -10,37 +10,19 @@ import torch as th
 from torch.nn import functional as F
 from sklearn.preprocessing import MinMaxScaler
 
-from .net import weight_init
+from sb3_srl.introspection import IntrospectionBelief
+from .net import ProjectionN
+from .net import SimpleSPRDecoder
 from .net import VectorEncoder
 from .net import VectorDecoder
 from .net import VectorSPRDecoder
-from .net import AdvantageDecoder
-from .utils import obs_reconstruction_loss
-from .utils import latent_l2_loss
-from .utils import obs2target_dist
+from .net import weight_init
+from .utils import compute_mutual_information
+from .utils import EarlyStopper
 from .utils import info_nce_loss
-
-
-class EarlyStopper:
-    def __init__(self, patience=4500, min_delta=0.):
-        self.patience = patience
-        self.min_delta = min_delta
-        self.counter = 0
-        self.min_validation_loss = float('inf')
-        self.stop = False
-
-    def __call__(self, validation_loss):
-        if self.stop:
-            return True
-        if validation_loss < self.min_validation_loss:
-            self.min_validation_loss = validation_loss
-            self.counter = 0
-        elif validation_loss > (self.min_validation_loss + self.min_delta):
-            self.counter += 1
-            if self.counter >= self.patience:
-                print('EarlyStopper')
-                self.stop = True
-        return self.stop
+from .utils import latent_l2_loss
+from .utils import obs_reconstruction_loss
+from .utils import obs2target_dist
 
 
 class AEModel:
@@ -54,6 +36,25 @@ class AEModel:
         self.scaler = None
         self.stop = None
         self.joint_optimize = False
+        self._log_fn = None
+    
+    def set_logger(self, logger_function, tag_prefix=''):
+        # Expects a SB3 logger from algorithm
+        self._log_fn = logger_function
+        self._tag_prefix = tag_prefix
+    
+    def log(self, tag, value):
+        tag = self._tag_prefix + tag
+        if self._log_fn is None:
+            print(f"{tag}: {value}")
+        else:
+            self._log_fn.record(tag, value)
+    
+    def log_mi(self, observation_z, q_min):
+        # Mutual Information to assess latent features' impact
+        mi = compute_mutual_information(observation_z, q_min)
+        self.log("mutual_information_zq", mi.mean())
+        return mi
 
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
@@ -90,8 +91,11 @@ class AEModel:
     def decoder_optim_step(self):
         self.decoder_optim.step()
 
-    def encode_obs(self, observation, detach=False):
+    def encode(self, observation, detach=False):
         return self.encoder(observation, detach=detach)
+
+    def encode_target(self, observation, detach=False):
+        return self.encoder_target(observation, detach=detach)
 
     def decode_latent(self, observation_z):
         return self.decoder(observation_z)
@@ -141,6 +145,8 @@ class AEModel:
 
     @property
     def must_update(self):
+        if self.stop is None:
+            return True
         return not self.stop.stop
 
     def make_target(self):
@@ -185,7 +191,7 @@ class VectorModel(AEModel):
 
     def compute_representation_loss(self, observations, actions, next_observations):
         # Compute reconstruction loss
-        obs_z = self.encoder(observations)
+        obs_z = self.encode(observations)
         rec_obs = self.decoder(obs_z)
         # reconstruct normalized observation
         obs_norm = th.FloatTensor(self.preprocess(observations.cpu()))
@@ -194,7 +200,10 @@ class VectorModel(AEModel):
         # add L2 penalty on latent representation
         latent_loss = latent_l2_loss(obs_z)
         loss = rec_loss + latent_loss * self.decoder_latent_lambda
-        return loss, latent_loss
+        self.log("mse_loss", rec_loss.item())
+        self.log("l2_loss", latent_loss.item())
+        self.log("ae_loss", loss.item())
+        return loss
 
 
 class VectorSPRModel(AEModel):
@@ -210,10 +219,10 @@ class VectorSPRModel(AEModel):
         self.joint_optimize = True
         self.encoder = VectorEncoder(vector_shape, latent_dim, hidden_dim,
                                      num_layers)
-        if not encoder_only:
-            self.decoder = VectorSPRDecoder(action_shape, latent_dim,
-                                            hidden_dim, num_layers)
-            self.encoder.projection = copy.deepcopy(self.decoder.projection)
+        self.encoder.projection = ProjectionN(latent_dim, hidden_dim)
+
+        self.decoder = VectorSPRDecoder(action_shape, latent_dim,
+                                        hidden_dim, num_layers)
         self.decoder_latent_lambda = decoder_latent_lambda
         self.apply(weight_init)
         self.make_target()
@@ -222,18 +231,14 @@ class VectorSPRModel(AEModel):
         # not required
         pass
 
-    def project_target(self, z):
-        h_fc = self.encoder_target.projection(z)
-        return th.tanh(h_fc)
-
-    def project_online(self, z):
-        h_fc = self.encoder.projection(z)
-        return th.tanh(h_fc)
+    def set_stopper(self, patience, threshold=0.):
+        # not required
+        pass
 
     def forward_y_hat(self, observation, action):
-        z_t = self.encoder(observation)
+        z_t = self.encode(observation)
         z_hat = self.decoder.transition(z_t, action)
-        g0_out = self.project_online(z_hat)
+        g0_out = self.encoder.projection(z_hat)
         y_hat = self.decoder.predict(g0_out)
         return y_hat
 
@@ -256,16 +261,11 @@ class VectorSPRModel(AEModel):
         # Compute reconstruction loss
         y_hat = self.forward_y_hat(observations, actions)
         with th.no_grad():
-            z_t1 = self.encoder_target(next_observations)
-            y_curl = self.project_target(z_t1)
-        # loss = self.compute_regression_loss(y_curl, y_hat)
-        contrastive = info_nce_loss(y_curl, y_hat)
-        # L2 over Z
-        # return loss, None
-        latent_loss = latent_l2_loss(z_t1)
-        self.update_stopper(latent_loss)
-        loss = contrastive + latent_loss * self.decoder_latent_lambda
-        return loss, latent_loss
+            y_curl = self.encode_target(next_observations)
+        loss = self.compute_regression_loss(y_curl, y_hat)
+        # L2 over Z?
+        self.log("rep_loss", loss.item())
+        return 2. * loss  # according to https://arxiv.org/pdf/2007.05929
 
 
 class VectorTargetDistModel(VectorModel):
@@ -304,10 +304,13 @@ class VectorTargetDistModel(VectorModel):
         # add L2 penalty on latent representation
         latent_loss = latent_l2_loss(obs_z)
         loss = rec_loss + latent_loss * self.decoder_latent_lambda
-        return loss, latent_loss
+        self.log("mse_loss", rec_loss.item())
+        self.log("l2_loss", latent_loss.item())
+        self.log("ae_loss", loss.item())
+        return loss
 
 
-class AdvantageModel(AEModel):
+class VectorSPRIModel(AEModel):
     def __init__(self,
                  vector_shape: tuple,
                  action_shape: tuple,
@@ -316,13 +319,12 @@ class AdvantageModel(AEModel):
                  num_layers: int = 2,
                  encoder_only: bool = False,
                  decoder_latent_lambda: float = 1e-6):
-        super(AdvantageModel, self).__init__('Advantage')
+        super(VectorSPRIModel, self).__init__('VectorSPRI')
         self.joint_optimize = True
         self.encoder = VectorEncoder(vector_shape, latent_dim, hidden_dim,
                                      num_layers)
-        if not encoder_only:
-            self.decoder = AdvantageDecoder(vector_shape, action_shape, latent_dim, hidden_dim,
-                                            num_layers)
+        self.decoder = SimpleSPRDecoder(vector_shape, action_shape, latent_dim, hidden_dim,
+                                        num_layers)
         self.decoder_latent_lambda = decoder_latent_lambda
         self.apply(weight_init)
         self.make_target()
@@ -331,59 +333,89 @@ class AdvantageModel(AEModel):
         # not required
         pass
 
-    def compute_probability_of_success(self, Q_sa, V_s_prime):
-        """
-        Computes the probability of success loss for optimization.
-
-        Args:
-            Q_sa (tuple): (Q1, Q2) from critics.
-            V_s_prime (tuple): (Q1_target, Q2_target) from target critics.
-
-        Returns:
-            torch.Tensor: Loss to maximize probability of success.
-        """
-        # Compute probability of success values
-        # originally 0.5 * log(Q/R^T) + 1 (clipped 0,1)
-        ratio = Q_sa.squeeze() / (V_s_prime.squeeze().abs() + 1e-6)  # Avoid division by zero
-        prob_success = th.sigmoid(ratio * 9.)
-        return prob_success.unsqueeze(1)
-
-    def compute_success_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
-        success_target = self.compute_probability_of_success(current_q_values, next_v_values)
-        success_prob = success_target * (1.  - dones)  #  final states probability = 0
-        success_hat = self.decoder.forward_prob(observations_z, actions)
-        return F.mse_loss(success_prob, success_hat), success_prob.mean()
-
-    def compute_nll_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
-        y_success = self.compute_probability_of_success(current_q_values, next_v_values)
-        y_true = y_success * (1.  - dones)
-        y_hat = self.decoder.forward_prob(observations_z, actions)
-
-        y_true = th.clamp(y_true, 0.0001, 0.9999)
-        y_hat = th.clamp(y_hat, 0.0001, 0.9999)
-
-        loss = -(y_true * th.log(y_hat) + (1 - y_true) * th.log(1 - y_hat))
-        return loss.mean(), y_true.mean()
-
-    def compute_representation_loss(self, observations, actions, next_observations):
-        # Compute reconstruction loss
-        obs_z = self.encoder(observations)
-        adv_code = self.decoder(obs_z, actions)
-        obs_z1 = self.encoder_target(next_observations)
-        contrastive = info_nce_loss(obs_z1, adv_code)
-        # obs_code = self.decoder.forward_proj(obs_z1)
-        # contrastive = info_nce_loss(obs_code, adv_code)
+    def compute_representation_loss(self, observations, actions, next_observations, z_return=False):
+        # Encode observations
+        obs_z = self.encode(observations)
+        obs_z1_hat = self.decoder(obs_z, actions)
+        obs_z1 = self.encode_target(next_observations)
+        # compare next_latent with transition
+        contrastive = info_nce_loss(obs_z1, obs_z1_hat)
+        # L2 over Z
         latent_loss = latent_l2_loss(obs_z1)
         self.update_stopper(latent_loss)
         loss = contrastive + latent_loss * self.decoder_latent_lambda
-        return loss, latent_loss
+        self.log("info_nce_loss", contrastive.item())
+        self.log("l2_loss", latent_loss.item())
+        self.log("rep_loss", loss.item())
+        if z_return:
+            return loss, obs_z
+        return loss  # *2.
 
-        # obs_z1 = self.encoder(next_observations)
 
-        # reconstruct normalized observation
-        # obs_norm = th.FloatTensor(self.preprocess(observations.cpu()))
-        # rec_loss = obs_reconstruction_loss(rec_obs, obs_norm.to(rec_obs.device))
-        # # add L2 penalty on latent representation
-        # latent_loss = latent_l2_loss(obs_z)
-        # loss = rec_loss + latent_loss * self.decoder_latent_lambda
-        # return loss, latent_loss
+class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
+    def __init__(self,
+                 vector_shape: tuple,
+                 action_shape: tuple,
+                 latent_dim: int = 50,
+                 hidden_dim: int = 256,
+                 num_layers: int = 2,
+                 encoder_only: bool = False,
+                 decoder_latent_lambda: float = 1e-6,
+                 introsp_latent_lambda: float = 1e-3):
+        IntrospectionBelief.__init__(
+            self,
+            action_shape,
+            input_dim=latent_dim,
+            hidden_dim=hidden_dim,
+            latent_lambda=introsp_latent_lambda)
+        VectorSPRIModel.__init__(
+            self,
+            vector_shape,
+            action_shape,
+            latent_dim=latent_dim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            encoder_only=encoder_only,
+            decoder_latent_lambda=decoder_latent_lambda)
+        self.type = 'VectorSPRI2'
+
+    def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
+                      **optim_kwargs):
+        VectorSPRIModel.enc_optimizer(self, encoder_lr, optim_class, **optim_kwargs)
+        IntrospectionBelief.p_optimizer(self, encoder_lr, optim_class, **optim_kwargs)
+    
+    def set_stopper(self, patience, threshold=0.):
+        self.prob_stop = EarlyStopper(patience, threshold, models=[self.probability])
+
+    @property
+    def must_update_prob(self):
+        return not self.prob_stop.stop
+    
+    def apply(self, function):
+        VectorSPRIModel.apply(self, function)
+        IntrospectionBelief.apply(self, function)
+
+    def to(self, device):
+        VectorSPRIModel.to(self, device)
+        IntrospectionBelief.to(self, device)
+
+    def update_representation(self, loss):
+        if self.must_update_prob:
+            self.zero_grad()
+        VectorSPRIModel.update_representation(self, loss)
+        if self.must_update_prob:
+            self.step_grad()
+
+    def compute_representation_loss(self, observations, actions, next_observations, current_q_values, next_v_values, dones):
+        # compute actual probabilities from actor and critic functions
+        success_prob = self.compute_Ps(current_q_values, next_v_values, dones)
+        self.log("probability_success", success_prob.mean().item())
+        # infer the probabilities with a MLP model with NLL
+        success_hat = self.probability(self.encode(observations), actions)
+        success_loss = self.compute_nll_loss(success_prob, success_hat)
+        self.log("probability_loss", success_loss.mean().item())
+        self.prob_stop(success_loss)
+        # ponderate aiming to increase the probability success values
+        p_loss = success_loss * self.introspection_lambda * self.must_update_prob + (success_prob.mean() - 1.)
+        return p_loss + VectorSPRIModel.compute_representation_loss(
+            self, observations, actions, next_observations)
