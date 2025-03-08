@@ -177,7 +177,7 @@ class SRLSAC(SAC, SRLAlgorithm):
             # Update target first
             self.update_encoder_target()
             with th.no_grad():
-                _obs_z = self.encoder_target(replay_data.observations)
+                _obs_z = self.enc_obs_target(replay_data.observations)
             actions_pi, log_prob = self.actor.action_log_prob(_obs_z)
             q_values_pi = th.cat(self.critic(_obs_z, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
