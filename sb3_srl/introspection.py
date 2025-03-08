@@ -9,6 +9,8 @@ import torch as th
 from torch import nn
 import torch.nn.functional as F
 
+from sb3_srl.utils import EarlyStopper
+
 
 def compute_probability_of_success(Q_sa, V_s_prime, eps=1e-6):
     r"""
@@ -76,6 +78,14 @@ class IntrospectionBelief:
                  early_stop: bool = True):
         self.probability = ProbabilityModel(action_shape, input_dim, hidden_dim)
         self.introspection_lambda = latent_lambda
+        self.prob_stop = None
+
+    def set_stopper(self, patience, threshold=0.):
+        self.prob_stop = EarlyStopper(patience, threshold, models=[self.probability])
+
+    @property
+    def must_update_prob(self):
+        return not self.prob_stop.stop if self.prob_stop is not None else True
 
     def prob_optimizer(self, learning_rate, optim_class=th.optim.Adam,
                        **optim_kwargs):
@@ -109,11 +119,16 @@ class IntrospectionBelief:
         """
         self.probability.train(mode)
 
-    def compute_Ps(self, current_q_values, next_v_values, dones):
-        return compute_Ps(current_q_values, next_v_values, dones)
-
     def infer_Ps(self, observations_z, actions):
         return self.probability(observations_z, actions)
 
-    def compute_nll_loss(self, success_prob, success_hat):
-        return compute_nll_loss(success_prob, success_hat)
+    def compute_success_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
+        # compute actual probabilities from actor and critic functions to be used aside the AEModel class
+        success_prob = compute_Ps(current_q_values, next_v_values, dones)
+        # infer the probabilities with a MLP model with NLL
+        success_hat = self.infer_Ps(observations_z, actions)
+        success_loss = compute_nll_loss(success_prob, success_hat)
+        self.prob_stop(success_loss)
+        # ponderate aiming to increase the probability success values
+        p_loss = success_loss * self.introspection_lambda * self.must_update_prob + (success_prob.mean() - 1.)
+        return p_loss, success_prob.mean(), success_loss.mean()  # *= 2.

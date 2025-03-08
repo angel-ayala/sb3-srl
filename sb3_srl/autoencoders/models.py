@@ -11,6 +11,8 @@ from torch.nn import functional as F
 from sklearn.preprocessing import MinMaxScaler
 
 from sb3_srl.introspection import IntrospectionBelief
+from sb3_srl.utils import EarlyStopper
+
 from .net import ProjectionN
 from .net import SimpleSPRDecoder
 from .net import VectorEncoder
@@ -18,7 +20,6 @@ from .net import VectorDecoder
 from .net import VectorSPRDecoder
 from .net import weight_init
 from .utils import compute_mutual_information
-from .utils import EarlyStopper
 from .utils import info_nce_loss
 from .utils import latent_l2_loss
 from .utils import obs_reconstruction_loss
@@ -382,13 +383,6 @@ class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
         VectorSPRIModel.enc_optimizer(self, encoder_lr, optim_class, **optim_kwargs)
         IntrospectionBelief.prob_optimizer(self, encoder_lr, optim_class, **optim_kwargs)
 
-    def set_stopper(self, patience, threshold=0.):
-        self.prob_stop = EarlyStopper(patience, threshold, models=[self.probability])
-
-    @property
-    def must_update_prob(self):
-        return not self.prob_stop.stop
-
     def apply(self, function):
         VectorSPRIModel.apply(self, function)
         IntrospectionBelief.apply(self, function)
@@ -403,16 +397,10 @@ class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
         VectorSPRIModel.update_representation(self, loss)
         if self.must_update_prob:
             self.prob_step()
-
+    
     def compute_success_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
-        # compute actual probabilities from actor and critic functions
-        success_prob = self.compute_Ps(current_q_values, next_v_values, dones)
-        self.log("probability_success", success_prob.mean().item())
-        # infer the probabilities with a MLP model with NLL
-        success_hat = self.infer_Ps(observations_z, actions)
-        success_loss = self.compute_nll_loss(success_prob, success_hat)
-        self.log("probability_loss", success_loss.mean().item())
-        self.prob_stop(success_loss)
-        # ponderate aiming to increase the probability success values
-        p_loss = success_loss * self.introspection_lambda * self.must_update_prob + (success_prob.mean() - 1.)
+        p_loss, success_prob, success_loss = IntrospectionBelief.compute_success_loss(
+            self, observations_z, actions, current_q_values, next_v_values, dones)
+        self.log("probability_success", success_prob.item())
+        self.log("probability_loss", success_loss.item())
         return p_loss  # *= 2.
