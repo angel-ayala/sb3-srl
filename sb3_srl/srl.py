@@ -54,11 +54,11 @@ class SRLAlgorithm:
     def _setup_model(self) -> None:
         self.policy.rep_model.to(self.device)
         # Running mean and running var
-        self.encoder_batch_norm_stats = get_parameters_by_name(self.encoder, ["running_"])
-        self.encoder_batch_norm_stats_target = get_parameters_by_name(self.encoder_target, ["running_"])
+        self.encoder_batch_norm_stats = get_parameters_by_name(self.policy.rep_model.encoder, ["running_"])
+        self.encoder_batch_norm_stats_target = get_parameters_by_name(self.policy.rep_model.encoder_target, ["running_"])
 
     def update_encoder_target(self):
-        polyak_update(self.encoder.parameters(), self.encoder_target.parameters(), self.policy.encoder_tau)
+        polyak_update(self.policy.rep_model.encoder.parameters(), self.policy.rep_model.encoder_target.parameters(), self.policy.encoder_tau)
         polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
 
     def _excluded_save_params(self) -> list[str]:
