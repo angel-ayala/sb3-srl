@@ -380,7 +380,7 @@ class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
         VectorSPRIModel.enc_optimizer(self, encoder_lr, optim_class, **optim_kwargs)
-        IntrospectionBelief.p_optimizer(self, encoder_lr, optim_class, **optim_kwargs)
+        IntrospectionBelief.prob_optimizer(self, encoder_lr, optim_class, **optim_kwargs)
 
     def set_stopper(self, patience, threshold=0.):
         self.prob_stop = EarlyStopper(patience, threshold, models=[self.probability])
