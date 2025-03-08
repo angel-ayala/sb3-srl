@@ -37,19 +37,19 @@ class AEModel:
         self.stop = None
         self.joint_optimize = False
         self._log_fn = None
-    
+
     def set_logger(self, logger_function, tag_prefix=''):
         # Expects a SB3 logger from algorithm
         self._log_fn = logger_function
         self._tag_prefix = tag_prefix
-    
+
     def log(self, tag, value):
         tag = self._tag_prefix + tag
         if self._log_fn is None:
             print(f"{tag}: {value}")
         else:
             self._log_fn.record(tag, value)
-    
+
     def log_mi(self, observation_z, q_min):
         # Mutual Information to assess latent features' impact
         mi = compute_mutual_information(observation_z, q_min)
@@ -381,14 +381,14 @@ class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
                       **optim_kwargs):
         VectorSPRIModel.enc_optimizer(self, encoder_lr, optim_class, **optim_kwargs)
         IntrospectionBelief.p_optimizer(self, encoder_lr, optim_class, **optim_kwargs)
-    
+
     def set_stopper(self, patience, threshold=0.):
         self.prob_stop = EarlyStopper(patience, threshold, models=[self.probability])
 
     @property
     def must_update_prob(self):
         return not self.prob_stop.stop
-    
+
     def apply(self, function):
         VectorSPRIModel.apply(self, function)
         IntrospectionBelief.apply(self, function)
@@ -399,22 +399,20 @@ class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
 
     def update_representation(self, loss):
         if self.must_update_prob:
-            self.zero_grad()
+            self.prob_zero_grad()
         VectorSPRIModel.update_representation(self, loss)
         if self.must_update_prob:
-            self.step_grad()
+            self.prob_step()
 
-    def compute_representation_loss(self, observations, actions, next_observations, current_q_values, next_v_values, dones):
+    def compute_success_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
         # compute actual probabilities from actor and critic functions
         success_prob = self.compute_Ps(current_q_values, next_v_values, dones)
         self.log("probability_success", success_prob.mean().item())
         # infer the probabilities with a MLP model with NLL
-        success_hat = self.probability(self.encode(observations), actions)
+        success_hat = self.infer_Ps(observations_z, actions)
         success_loss = self.compute_nll_loss(success_prob, success_hat)
         self.log("probability_loss", success_loss.mean().item())
         self.prob_stop(success_loss)
         # ponderate aiming to increase the probability success values
         p_loss = success_loss * self.introspection_lambda * self.must_update_prob + (success_prob.mean() - 1.)
-        # p_loss *= 2.
-        return p_loss + VectorSPRIModel.compute_representation_loss(
-            self, observations, actions, next_observations)
+        return p_loss  # *= 2.

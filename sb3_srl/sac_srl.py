@@ -45,6 +45,9 @@ class SRLSACPolicy(SACPolicy, SRLPolicy):
     def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
         return SRLPolicy._predict(self, observation)
 
+    def set_training_mode(self, mode: bool) -> None:
+        return SRLPolicy.set_training_mode(self, mode)
+
 
 class SRLSAC(SAC, SRLAlgorithm):
     def __init__(self, *args, **kwargs):
@@ -150,13 +153,12 @@ class SRLSAC(SAC, SRLAlgorithm):
             adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
+            rep_loss = self.policy.rep_model.compute_representation_loss(
+                replay_data.observations, replay_data.actions, replay_data.next_observations)
             if 'SPRI2' in self.policy.rep_model.type:
-                rep_loss = self.policy.rep_model.compute_representation_loss(
-                    replay_data.observations, replay_data.actions, replay_data.next_observations,
-                    Q_min, next_v_values, replay_data.dones)
-            else:
-                rep_loss = self.policy.rep_model.compute_representation_loss(
-                    replay_data.observations, replay_data.actions, replay_data.next_observations)
+                rep_loss += self.policy.rep_model.compute_success_loss(
+                    obs_z, replay_data.actions, Q_min,
+                    next_v_values, replay_data.dones)
 
             if self.policy.rep_model.joint_optimize:
                 # Optimize the critics and representation

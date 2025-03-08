@@ -14,7 +14,7 @@ from torch.nn import functional as F
 from stable_baselines3.common.policies import ContinuousCritic
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.type_aliases import PyTorchObs
-from stable_baselines3.common.utils import get_parameters_by_name, polyak_update
+from stable_baselines3.common.utils import polyak_update
 
 from stable_baselines3 import TD3
 from stable_baselines3.td3.policies import Actor
@@ -44,6 +44,9 @@ class SRLTD3Policy(TD3Policy, SRLPolicy):
 
     def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
         return SRLPolicy._predict(self, observation)
+
+    def set_training_mode(self, mode: bool) -> None:
+        return SRLPolicy.set_training_mode(self, mode)
 
 
 class SRLTD3(TD3, SRLAlgorithm):
@@ -115,13 +118,12 @@ class SRLTD3(TD3, SRLAlgorithm):
             adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
+            rep_loss = self.policy.rep_model.compute_representation_loss(
+                replay_data.observations, replay_data.actions, replay_data.next_observations)
             if 'SPRI2' in self.policy.rep_model.type:
-                rep_loss = self.policy.rep_model.compute_representation_loss(
-                    replay_data.observations, replay_data.actions, replay_data.next_observations,
-                    Q_min, next_v_values, replay_data.dones)
-            else:
-                rep_loss = self.policy.rep_model.compute_representation_loss(
-                    replay_data.observations, replay_data.actions, replay_data.next_observations)
+                rep_loss += self.policy.rep_model.compute_success_loss(
+                    obs_z, replay_data.actions, Q_min,
+                    next_v_values, replay_data.dones)
 
             if self.policy.rep_model.joint_optimize:
                 # Optimize the critics and representation

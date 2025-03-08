@@ -48,9 +48,6 @@ class SRLPolicy:
 class SRLAlgorithm:
 
     def _create_aliases(self) -> None:
-        self.encoder = self.policy.rep_model.encoder
-        self.decoder = self.policy.rep_model.decoder
-        self.encoder_target = self.policy.rep_model.encoder_target
         self.enc_obs = self.policy.rep_model.encode
         self.enc_obs_target = self.policy.rep_model.encode_target
 
@@ -65,12 +62,15 @@ class SRLAlgorithm:
         polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
 
     def _excluded_save_params(self) -> list[str]:
-        # return ["encoder", "decoder", "encoder_target"]  # noqa: RUF005
-        return ["encoder", "decoder", "encoder_target", "enc_obs", "enc_obs_target"]  # noqa: RUF005
+        return ["enc_obs", "enc_obs_target"]  # noqa: RUF005
 
     def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
         state_dicts = ["policy.rep_model.encoder"]
         state_dicts += ["policy.rep_model.encoder_optim"]
         state_dicts += ["policy.rep_model.decoder"]
         state_dicts += ["policy.rep_model.decoder_optim"]
+        if hasattr(self.policy, "rep_model.probability"):
+            state_dicts += ["policy.rep_model.probability"]
+            state_dicts += ["policy.rep_model.probability_optim"]
+            
         return state_dicts, []
