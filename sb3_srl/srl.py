@@ -32,7 +32,7 @@ class SRLPolicy:
         # Note: the deterministic deterministic parameter is ignored in the case of TD3.
         #   Predictions are always deterministic.
         with th.no_grad():
-            obs_z = self.rep_model.encode(observation)
+            obs_z = self.rep_model.forward_z(observation)
         return self.actor(obs_z)
 
     def set_training_mode(self, mode: bool) -> None:
@@ -48,17 +48,17 @@ class SRLPolicy:
 class SRLAlgorithm:
 
     def _create_aliases(self) -> None:
-        self.enc_obs = self.policy.rep_model.encode
-        self.enc_obs_target = self.policy.rep_model.encode_target
+        self.enc_obs = self.policy.rep_model.encoder
+        self.enc_obs_target = self.policy.rep_model.encoder_target
 
     def _setup_model(self) -> None:
         self.policy.rep_model.to(self.device)
         # Running mean and running var
-        self.encoder_batch_norm_stats = get_parameters_by_name(self.policy.rep_model.encoder, ["running_"])
-        self.encoder_batch_norm_stats_target = get_parameters_by_name(self.policy.rep_model.encoder_target, ["running_"])
+        self.encoder_batch_norm_stats = get_parameters_by_name(self.enc_obs, ["running_"])
+        self.encoder_batch_norm_stats_target = get_parameters_by_name(self.enc_obs_target, ["running_"])
 
     def update_encoder_target(self):
-        polyak_update(self.policy.rep_model.encoder.parameters(), self.policy.rep_model.encoder_target.parameters(), self.policy.encoder_tau)
+        polyak_update(self.enc_obs.parameters(), self.enc_obs_target.parameters(), self.policy.encoder_tau)
         polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
 
     def _excluded_save_params(self) -> list[str]:

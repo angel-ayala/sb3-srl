@@ -5,10 +5,13 @@ Created on Thu Feb  6 11:23:42 2025
 
 @author: angel
 """
+from typing import List
 
 import torch as th
 from torch import nn
 import torch.nn.functional as F
+
+from stable_baselines3.common.torch_layers import create_mlp
 
 
 def tie_weights(src, trg):
@@ -50,12 +53,12 @@ def renormalize(tensor, first_dim=1):
 
 
 class MLP(nn.Module):
-    def __init__(self, n_input, n_output, hidden_dim, num_layers=2):
+    def __init__(self, n_input, n_output, layers_dim=[256, 256]): #hidden_dim, num_layers=2):
         super(MLP, self).__init__()
-        self.h_layers = nn.ModuleList([nn.Linear(n_input, hidden_dim)])
-        for i in range(num_layers - 1):
-            self.h_layers.append(nn.Linear(hidden_dim, hidden_dim))
-        self.h_layers.append(nn.Linear(hidden_dim, n_output))
+        self.h_layers = nn.ModuleList([nn.Linear(n_input, layers_dim[0])])
+        for i in range(len(layers_dim) - 1):
+            self.h_layers.append(nn.Linear(layers_dim[i], layers_dim[i + 1]))
+        self.h_layers.append(nn.Linear(layers_dim[-1], n_output))
         self.num_layers = len(self.h_layers)
 
     def forward(self, obs):
@@ -67,12 +70,11 @@ class MLP(nn.Module):
 
 
 class Conv1dMLP(MLP):
-    def __init__(self, state_shape, out_dim, hidden_dim, num_layers=2):
-        super(Conv1dMLP, self).__init__(
-            state_shape[-1], out_dim, hidden_dim, num_layers=num_layers)
-        if len(state_shape) == 2:
-            self.h_layers[0] = nn.Conv1d(state_shape[0], hidden_dim,
-                                         kernel_size=state_shape[-1])
+    def __init__(self, input_shape, n_output, layers_dim=[256, 256]):
+        super(Conv1dMLP, self).__init__(input_shape[-1], n_output, layers_dim=layers_dim)
+        if len(input_shape) == 2:
+            self.h_layers[0] = nn.Conv1d(input_shape[0], layers_dim[0],
+                                         kernel_size=input_shape[-1])
 
     def forward_h(self, obs):
         h = obs
@@ -91,10 +93,9 @@ class VectorEncoder(Conv1dMLP):
     def __init__(self,
                  vector_shape: tuple,
                  latent_dim: int,
-                 hidden_dim: int,
-                 num_layers: int = 2):
+                 layers_dim: List[int] = [256, 256]):
         super(VectorEncoder, self).__init__(
-            vector_shape, latent_dim, hidden_dim, num_layers=num_layers)
+            vector_shape, latent_dim, layers_dim=layers_dim)
         self.feature_dim = latent_dim
         self.fc = nn.Linear(latent_dim, latent_dim)
         self.ln = nn.LayerNorm(self.feature_dim)
@@ -117,13 +118,12 @@ class VectorDecoder(MLP):
     def __init__(self,
                  vector_shape: tuple,
                  latent_dim: int,
-                 hidden_dim: int,
-                 num_layers: int = 2):
+                 layers_dim: List[int] = [256, 256]):
         super(VectorDecoder, self).__init__(
-            latent_dim, vector_shape[-1], hidden_dim, num_layers=num_layers)
+            latent_dim, vector_shape[-1], layers_dim=layers_dim)
         if len(vector_shape) == 2:
             self.h_layers[-1] = nn.ConvTranspose1d(
-                hidden_dim, vector_shape[0], kernel_size=vector_shape[-1])
+                layers_dim[0], vector_shape[0], kernel_size=vector_shape[-1])
         self.fc = nn.Linear(latent_dim, latent_dim)
 
     def forward(self, z):
@@ -157,13 +157,10 @@ class VectorSPRDecoder(nn.Module):
     def __init__(self,
                  action_shape: tuple,
                  latent_dim: int,
-                 hidden_dim: int,
-                 num_layers: int = 2):
+                 layers_dim: List[int] = [256]):
         super(VectorSPRDecoder, self).__init__()
-        self.code = nn.Sequential(
-            nn.Linear(latent_dim + action_shape[-1], hidden_dim),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, latent_dim))
+        layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, False, True)
+        self.code = nn.Sequential(*layers)
         self.pred = nn.Linear(latent_dim, latent_dim)
 
     def transition(self, z, action):
@@ -183,23 +180,15 @@ class VectorSPRDecoder(nn.Module):
 class SimpleSPRDecoder(nn.Module):
     """SimpleSPRDecoder as representation learning function."""
     def __init__(self,
-                 vector_shape: tuple,
                  action_shape: tuple,
                  latent_dim: int,
-                 hidden_dim: int,
-                 num_layers: int = 2):
+                 layers_dim: List[int] = [256]):
         super(SimpleSPRDecoder, self).__init__()
-        self.code = nn.Sequential(
-            nn.Linear(latent_dim + action_shape[-1], hidden_dim),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, latent_dim),
-            nn.LayerNorm(latent_dim),
-            nn.Tanh())
-        self.projection = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, latent_dim),
-            nn.Tanh())
+        code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
+        code_layers.insert(-1, nn.LayerNorm(latent_dim))
+        self.code = nn.Sequential(*code_layers)
+        proj_layers = create_mlp(latent_dim, latent_dim, layers_dim, nn.LeakyReLU, True, True)
+        self.projection = nn.Sequential(*proj_layers)
 
     def forward_z_hat(self, z, action):
         return self.code(th.cat([z, action], dim=1))

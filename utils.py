@@ -127,6 +127,10 @@ def parse_srl_args(parser):
                          help='Whether if use the VectorSPRI model.')
     arg_srl.add_argument("--model-vector-spri2", action='store_true',
                          help='Whether if use the VectorSPRI model.')
+    arg_srl.add_argument("--introspection-lambda", type=float, default=0,
+                         help='Introspection loss function \lambda value, >0 to use introspection.')
+    arg_srl.add_argument("--joint-optimization", action='store_true',
+                         help='Whether if jointly optimize representation with RL updates.')
     # arg_srl.add_argument("--model-vector-difference", action='store_true',
     #                      help='Whether if use the VectorDifference reconstruction model.')
     # arg_srl.add_argument("--model-rgb", action='store_true',
@@ -274,14 +278,17 @@ def args2ae_config(args, env_params):
     # image_shape = env_params['image_shape']
     model_params = {
         'latent_dim': args.latent_dim,
-        'hidden_dim': args.hidden_dim,
-        'num_layers': args.num_layers,
+        'layers_dim': [args.hidden_dim] * args.num_layers,
         'encoder_lr': args.encoder_lr,
         'decoder_lr': args.decoder_lr,
         'encoder_only': args.encoder_only,
         'encoder_steps': args.encoder_steps,
-        'decoder_latent_lambda': args.decoder_latent_lambda,
-        'decoder_weight_decay': args.decoder_weight_decay
+        'decoder_lambda': args.decoder_latent_lambda,
+        'decoder_weight_decay': args.decoder_weight_decay,
+        'joint_optimization': args.joint_optimization,
+        'introspection_lambda': args.introspection_lambda,
+        'vector_shape': env_params['vector_shape'],
+        'action_shape': env_params['action_shape'],
         }
 
     if args.model_vector:
@@ -306,12 +313,6 @@ def args2ae_config(args, env_params):
             'vector_shape': env_params['vector_shape'],
             'action_shape': env_params['action_shape'],
             })
-    if args.model_vector_spri2:
-        ae_models['VectorSPRI2'] = model_params.copy()
-        ae_models['VectorSPRI2'].update({
-            'vector_shape': env_params['vector_shape'],
-            'action_shape': env_params['action_shape'],
-            })
 
     return ae_models
 
@@ -328,16 +329,20 @@ def args2logpath(args, algo):
         outfolder = args.logspath
 
     path_suffix = ''
-    if args.is_srl:
-        path_suffix += '-srl'
+    # method labels
+    if args.model_vector:
+        path_suffix += '-rec'
     if args.model_vector_spr:
         path_suffix += '-spr'
     if args.model_vector_target_dist:
-        path_suffix += '-tdist'
+        path_suffix += '-drec'
     if args.model_vector_spri:
         path_suffix += '-spri'
-    if args.model_vector_spri2:
-        path_suffix += '-spri2'
+    # extra labels
+    if args.introspection_lambda != 0.:
+        path_suffix += '-intr'
+    if args.joint_optimization:
+        path_suffix += '-joint'
     # if args.model_vector_difference:
     #     path_suffix += '-diff'
     exp_name = f"{algo}{path_suffix}"

@@ -104,7 +104,7 @@ class SRLTD3(TD3, SRLAlgorithm):
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
             # Get current Q-values estimates for each critic network
-            if self.policy.rep_model.joint_optimize:
+            if self.policy.rep_model.joint_optimization:
                 obs_z = self.enc_obs(replay_data.observations)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
@@ -120,12 +120,12 @@ class SRLTD3(TD3, SRLAlgorithm):
             # Compute reconstruction loss
             rep_loss = self.policy.rep_model.compute_representation_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
-            if 'SPRI2' in self.policy.rep_model.type:
+            if self.policy.rep_model.is_introspection:
                 rep_loss += self.policy.rep_model.compute_success_loss(
                     obs_z, replay_data.actions, Q_min,
                     next_v_values, replay_data.dones)
 
-            if self.policy.rep_model.joint_optimize:
+            if self.policy.rep_model.joint_optimization:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
                 self.policy.rep_model.update_representation(critic_loss + rep_loss)

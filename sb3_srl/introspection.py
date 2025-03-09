@@ -74,8 +74,7 @@ class IntrospectionBelief:
                  action_shape: tuple,
                  input_dim: int = 50,
                  hidden_dim: int = 256,
-                 latent_lambda: float = 1e-3,
-                 early_stop: bool = True):
+                 latent_lambda: float = 1e-3):
         self.probability = ProbabilityModel(action_shape, input_dim, hidden_dim)
         self.introspection_lambda = latent_lambda
         self.prob_stop = None
@@ -122,13 +121,12 @@ class IntrospectionBelief:
     def infer_Ps(self, observations_z, actions):
         return self.probability(observations_z, actions)
 
-    def compute_success_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
+    def success_loss(self, success_hat, current_q_values, next_v_values, dones):
         # compute actual probabilities from actor and critic functions to be used aside the AEModel class
         success_prob = compute_Ps(current_q_values, next_v_values, dones)
-        # infer the probabilities with a MLP model with NLL
-        success_hat = self.infer_Ps(observations_z, actions)
+        # compare using NLL
         success_loss = compute_nll_loss(success_prob, success_hat)
-        self.prob_stop(success_loss)
+        # TODO: include early_stop if must
         # ponderate aiming to increase the probability success values
-        p_loss = success_loss * self.introspection_lambda * self.must_update_prob + (success_prob.mean() - 1.)
-        return p_loss, success_prob.mean(), success_loss.mean()  # *= 2.
+        p_loss = success_loss * self.introspection_lambda + (success_prob.mean() - 1.)
+        return p_loss, success_prob.mean(), success_loss  # *= 2.
