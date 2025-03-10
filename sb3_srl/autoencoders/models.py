@@ -200,7 +200,7 @@ class AEModel:
         p_loss, success_prob, success_loss = IntrospectionBelief.success_loss(self, success_hat, current_q_values, next_v_values, dones)
         self.log("probability_success", success_prob.item())
         self.log("probability_loss", success_loss.item())
-        return p_loss  # *= 2.
+        return p_loss
 
     def __repr__(self):
         out_str = f"{self.type}Model:\n"
@@ -402,8 +402,10 @@ class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
             self.prob_step()
 
     def compute_success_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
-        p_loss, success_prob, success_loss = IntrospectionBelief.compute_success_loss(
-            self, observations_z, actions, current_q_values, next_v_values, dones)
+        # infer the probabilities with a MLP model with NLL
+        success_hat = self.infer_Ps(observations_z, actions)
+        p_loss, success_prob, success_loss = IntrospectionBelief.success_loss(
+            self, success_hat, current_q_values, next_v_values, dones)
         self.log("probability_success", success_prob.item())
         self.log("probability_loss", success_loss.item())
-        return p_loss  # *= 2.
+        return p_loss

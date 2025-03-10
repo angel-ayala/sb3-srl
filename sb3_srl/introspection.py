@@ -30,7 +30,7 @@ def compute_probability_of_success(Q_sa, V_s_prime, eps=1e-6):
     """
     # Compute probability of success values
     # originally 0.5 * log(Q/R^T) + 1 (clipped 0,1)
-    ratio = Q_sa.squeeze() / (V_s_prime.squeeze() + eps)
+    ratio = Q_sa.squeeze() / (V_s_prime.squeeze().abs() + eps)
     return th.sigmoid(ratio * 9.).unsqueeze(1)
 
 
