@@ -446,7 +446,7 @@ class PixelModel(AEModel):
         loss = rec_loss + latent_loss * self.decoder_lambda
         self.log("l2_loss", latent_loss.item())
         self.log("rep_loss", loss.item())
-        if self.LOG_FREQ % self.call == 0:
+        if self.call % self.LOG_FREQ == 0:
             # n_stack = obs_shape[1] // 3
             # obs_log = obs.reshape((obs_shape[0] * n_stack, 3) + obs_shape[-2:])
             img_grid = torchvision.utils.make_grid(rec_obs[-3:], nrow=3, value_range=(-.5, .5), normalize=True)
