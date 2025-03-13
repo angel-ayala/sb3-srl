@@ -11,8 +11,10 @@ from sklearn.feature_selection import mutual_info_regression
 from info_nce import InfoNCE
 
 
-def preprocess_obs(obs, bits=5):
-    """Preprocessing image, see https://arxiv.org/abs/1807.03039."""
+def preprocess_pixel_obs(obs, bits=5):
+    """Preprocessing image, see https://arxiv.org/abs/1807.03039.
+
+    taken from https://github.com/denisyarats/pytorch_sac_ae"""
     bins = 2**bits
     assert obs.dtype == th.float32
     if bits < 8:
@@ -32,23 +34,6 @@ def destack(obs_stack, len_hist=3, is_rgb=False):
         obs_destack = obs_stack.reshape(
             (orig_shape[0] * len_hist, orig_shape[-1]))
     return obs_destack, orig_shape
-
-
-def obs_reconstruction_loss(true_obs, rec_obs):
-    len_stack = true_obs.shape[1]
-    if len(true_obs.shape) == 3:
-        # de-stack
-        true_obs, _ = destack(true_obs, len_hist=len_stack, is_rgb=False)
-
-    if len(true_obs.shape) == 4:
-        # preprocess images to be in [-0.5, 0.5] range
-        true_obs = preprocess_obs(true_obs)
-        # de-stack
-        true_obs, _ = destack(true_obs, len_hist=len_stack // 3, is_rgb=True)
-
-    output_obs = rec_obs.reshape(true_obs.shape)
-
-    return F.mse_loss(output_obs, true_obs)
 
 
 def latent_l2_loss(latent_value):
@@ -122,11 +107,11 @@ def compute_distance(coord1: th.Tensor, coord2: th.Tensor) -> th.Tensor:
 
 def compute_elevation_angle(reference: th.Tensor, target: th.Tensor) -> th.Tensor:
     """Compute the normalized elevation angle between two 3D points.
-    
+
     Args:
         reference (th.Tensor): A tensor of shape (3,) representing the reference point (x, y, z).
         target (th.Tensor): A tensor of shape (3,) representing the target point (x, y, z).
-    
+
     Returns:
         th.Tensor: A tensor representing the normalized elevation angle, scaled to the range [-1, 1].
     """

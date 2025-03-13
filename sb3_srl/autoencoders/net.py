@@ -91,11 +91,11 @@ class Conv1dMLP(MLP):
 
 class VectorEncoder(Conv1dMLP):
     def __init__(self,
-                 vector_shape: tuple,
+                 state_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256]):
         super(VectorEncoder, self).__init__(
-            vector_shape, latent_dim, layers_dim=layers_dim)
+            state_shape, latent_dim, layers_dim=layers_dim)
         self.feature_dim = latent_dim
         self.fc = nn.Linear(latent_dim, latent_dim)
         self.ln = nn.LayerNorm(self.feature_dim)
@@ -116,14 +116,14 @@ class VectorEncoder(Conv1dMLP):
 
 class VectorDecoder(MLP):
     def __init__(self,
-                 vector_shape: tuple,
+                 state_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256]):
         super(VectorDecoder, self).__init__(
-            latent_dim, vector_shape[-1], layers_dim=layers_dim)
-        if len(vector_shape) == 2:
+            latent_dim, state_shape[-1], layers_dim=layers_dim)
+        if len(state_shape) == 2:
             self.h_layers[-1] = nn.ConvTranspose1d(
-                layers_dim[0], vector_shape[0], kernel_size=vector_shape[-1])
+                layers_dim[0], state_shape[0], kernel_size=state_shape[-1])
         self.fc = nn.Linear(latent_dim, latent_dim)
 
     def forward(self, z):
@@ -152,13 +152,13 @@ class ProjectionN(nn.Module):
         return self.projection(x)
 
 
-class VectorSPRDecoder(nn.Module):
+class SPRDecoder(nn.Module):
     """VectorSPRDecoder for reconstruction function."""
     def __init__(self,
                  action_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256]):
-        super(VectorSPRDecoder, self).__init__()
+        super(SPRDecoder, self).__init__()
         layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, False, True)
         self.code = nn.Sequential(*layers)
         self.pred = nn.Linear(latent_dim, latent_dim)
@@ -200,3 +200,87 @@ class SimpleSPRDecoder(nn.Module):
         code = self.forward_z_hat(z, action)
         proj = self.forward_proj(code)
         return proj
+
+
+OUT_DIM = {2: 39, 4: 35, 6: 31}
+
+
+class PixelEncoder(nn.Module):
+    """Convolutional encoder of pixels observations."""
+
+    def __init__(self, state_shape: tuple,
+                 latent_dim: int,
+                 layers_filter: List[int] = [32, 32]):
+        super().__init__()
+        assert len(state_shape) == 3
+        self.feature_dim = latent_dim
+        self.num_layers = len(layers_filter)
+        self.convs = nn.ModuleList(
+            [nn.Conv2d(state_shape[0], layers_filter[0], 3, stride=2)]
+        )
+        for i in range(self.num_layers - 1):
+            self.convs.append(nn.Conv2d(layers_filter[i], layers_filter[i + 1], 3, stride=1))
+
+        out_dim = OUT_DIM[self.num_layers]
+        self.fc = nn.Linear(layers_filter[-1] * out_dim * out_dim, self.feature_dim)
+        self.ln = nn.LayerNorm(self.feature_dim)
+
+    def forward_conv(self, obs):
+        obs = obs.float() / 255.  # normalize
+        conv = th.relu(self.convs[0](obs.float()))
+        for i in range(1, self.num_layers):
+            conv = th.relu(self.convs[i](conv))
+        return conv
+
+    def forward(self, obs, detach=False):
+        h = self.forward_conv(obs)
+        if detach:
+            h = h.detach()
+
+        h = h.view(h.size(0), -1)
+        h_fc = self.fc(h)
+        h_norm = self.ln(h_fc)
+        h = th.tanh(h_norm)
+
+        return h
+
+    def copy_weights_from(self, source):
+        """Tie convolutional layers"""
+        # only tie conv layers
+        for i in range(self.num_layers):
+            tie_weights(src=source.convs[i], trg=self.convs[i])
+
+
+class PixelDecoder(nn.Module):
+    def __init__(self, state_shape: tuple,
+                 latent_dim: int,
+                 layers_filter: List[int] = [32, 32]):
+        super().__init__()
+        self.num_layers = len(layers_filter)
+        self.num_filters = layers_filter[0]
+        self.out_dim = OUT_DIM[self.num_layers]
+
+        self.fc = nn.Linear(
+            latent_dim, self.num_filters * self.out_dim * self.out_dim
+        )
+
+        self.deconvs = nn.ModuleList()
+        for i in range(self.num_layers - 1):
+            self.deconvs.extend([
+                nn.ConvTranspose2d(layers_filter[i], layers_filter[i + 1], 3, stride=1)
+            ])
+        self.deconvs.extend([
+            nn.ConvTranspose2d(
+                layers_filter[-1], state_shape[0], 3, stride=2, output_padding=1
+            )
+        ])
+
+    def forward(self, h):
+        h = th.relu(self.fc(h))
+        deconv = h.view(-1, self.num_filters, self.out_dim, self.out_dim)
+
+        for i in range(len(self.deconvs) - 1):
+            deconv = th.relu(self.deconvs[i](deconv))
+        obs = self.deconvs[-1](deconv)
+
+        return obs

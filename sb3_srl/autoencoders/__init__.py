@@ -9,6 +9,9 @@ from .models import VectorModel
 from .models import VectorSPRModel
 from .models import VectorTargetDistModel
 from .models import VectorSPRIModel
+from .models import PixelModel
+from .models import PixelSPRModel
+from .models import PixelSPRIModel
 
 
 def instance_autoencoder(ae_type: str, ae_params: dict):

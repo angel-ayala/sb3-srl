@@ -9,23 +9,27 @@ from typing import List
 
 import copy
 import torch as th
+import torchvision
 from torch.nn import functional as F
 from sklearn.preprocessing import MinMaxScaler
+from stable_baselines3.common.logger import Image as ImageLogger
 
 from sb3_srl.introspection import IntrospectionBelief
 from sb3_srl.utils import EarlyStopper
 
+from .net import PixelDecoder
+from .net import PixelEncoder
 from .net import ProjectionN
 from .net import SimpleSPRDecoder
-from .net import VectorEncoder
+from .net import SPRDecoder
 from .net import VectorDecoder
-from .net import VectorSPRDecoder
+from .net import VectorEncoder
 from .net import weight_init
 from .utils import compute_mutual_information
 from .utils import info_nce_loss
 from .utils import latent_l2_loss
-from .utils import obs_reconstruction_loss
 from .utils import obs2target_dist
+from .utils import preprocess_pixel_obs
 
 
 class AEModel:
@@ -34,18 +38,20 @@ class AEModel:
     def __init__(self,
                  model_type: str,
                  action_shape: tuple,
-                 vector_shape: tuple,
+                 state_shape: tuple,
                  latent_dim: int = 50,
                  layers_dim: List[int] = [256, 256],
+                 layers_filter: List[int] = [32, 32],
                  encoder_only: bool = False,
                  decoder_lambda: float = 1e-6,
                  joint_optimization: bool = False,
                  introspection_lambda: float = 0):
         self.type = model_type
         self.args = {'action_shape': action_shape,
-                     'vector_shape': vector_shape,
+                     'state_shape': state_shape,
                      'latent_dim': latent_dim,
-                     'layers_dim': layers_dim}
+                     'layers_dim': layers_dim,
+                     'layers_filter': layers_filter}
         self.encoder = None
         self.decoder = None
         self.scaler = None
@@ -216,6 +222,7 @@ class VectorModel(AEModel):
         self.set_scaler((-1, 1))
 
     def _setup_models(self):
+        del self.args['layers_filter']
         enc_args = self.args.copy()
         del enc_args['action_shape']
         self.encoder = VectorEncoder(**enc_args)
@@ -233,14 +240,13 @@ class VectorModel(AEModel):
         rec_obs = self.decoder(obs_z)
         # MSE loss reconstruction
         obs_norm = self.preprocess_reconstruction(observations)
-        rec_loss = obs_reconstruction_loss(rec_obs, obs_norm.to(rec_obs.device))
+        rec_loss = F.mse_loss(rec_obs, obs_norm.to(rec_obs.device))
         self.update_stopper(rec_loss)
         # add L2 penalty on latent representation
         latent_loss = latent_l2_loss(obs_z)
         loss = rec_loss + latent_loss * self.decoder_lambda
-        self.log("mse_loss", rec_loss.item())
         self.log("l2_loss", latent_loss.item())
-        self.log("ae_loss", loss.item())
+        self.log("rep_loss", loss.item())
         return loss
 
 
@@ -249,6 +255,7 @@ class VectorSPRModel(AEModel):
         super(VectorSPRModel, self).__init__('VectorSPR', *args, **kwargs)
 
     def _setup_models(self):
+        del self.args['layers_filter']
         enc_args = self.args.copy()
         del enc_args['action_shape']
         self.encoder = VectorEncoder(**enc_args)
@@ -256,8 +263,8 @@ class VectorSPRModel(AEModel):
 
         if not self.encoder_only:
             dec_args = self.args.copy()
-            del dec_args['vector_shape']
-            self.decoder = VectorSPRDecoder(**dec_args)
+            del dec_args['state_shape']
+            self.decoder = SPRDecoder(**dec_args)
         super(VectorSPRModel, self)._setup_models()
 
     def set_stopper(self, patience, threshold=0.):
@@ -326,13 +333,14 @@ class VectorSPRIModel(AEModel):
         super(VectorSPRIModel, self).__init__('VectorSPRI', *args, **kwargs)
 
     def _setup_models(self):
+        del self.args['layers_filter']
         enc_args = self.args.copy()
         del enc_args['action_shape']
         self.encoder = VectorEncoder(**enc_args)
 
         if not self.encoder_only:
             dec_args = self.args.copy()
-            del dec_args['vector_shape']
+            del dec_args['state_shape']
             self.decoder = SimpleSPRDecoder(**dec_args)
         super(VectorSPRIModel, self)._setup_models()
 
@@ -347,7 +355,6 @@ class VectorSPRIModel(AEModel):
         latent_loss = latent_l2_loss(obs_z1)
         self.update_stopper(latent_loss)
         loss = contrastive + latent_loss * self.decoder_lambda
-        self.log("info_nce_loss", contrastive.item())
         self.log("l2_loss", latent_loss.item())
         self.log("rep_loss", loss.item())
         return loss  # *2.
@@ -355,7 +362,7 @@ class VectorSPRIModel(AEModel):
 
 class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
     def __init__(self,
-                 vector_shape: tuple,
+                 state_shape: tuple,
                  action_shape: tuple,
                  latent_dim: int = 50,
                  layers_dim: List[int] = [256, 256],
@@ -370,7 +377,7 @@ class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
             latent_lambda=introsp_lambda)
         VectorSPRIModel.__init__(
             self,
-            vector_shape,
+            state_shape,
             action_shape,
             latent_dim=latent_dim,
             layers_dim=layers_dim,
@@ -409,3 +416,77 @@ class VectorSPRI2Model(VectorSPRIModel, IntrospectionBelief):
         self.log("probability_success", success_prob.item())
         self.log("probability_loss", success_loss.item())
         return p_loss
+
+
+class PixelModel(AEModel):
+    def __init__(self, *args, **kwargs):
+        super(PixelModel, self).__init__('Pixel', *args, **kwargs)
+        self.call = 0
+
+    def _setup_models(self):
+        del self.args['layers_dim']
+        enc_args = self.args.copy()
+        del enc_args['action_shape']
+        self.encoder = PixelEncoder(**enc_args)
+        if not self.encoder_only:
+            self.decoder = PixelDecoder(**enc_args)
+        super(PixelModel, self)._setup_models()
+
+    def compute_representation_loss(self, observations, actions, next_observations):
+        self.call += 1
+        # Compute reconstruction loss
+        obs_z = self.encoder(observations)
+        rec_obs = self.decoder(obs_z)
+        # MSE loss reconstruction
+        obs_norm = preprocess_pixel_obs(observations.float(), bits=5)
+        rec_loss = F.mse_loss(rec_obs, obs_norm.to(rec_obs.device))
+        self.update_stopper(rec_loss)
+        # add L2 penalty on latent representation
+        latent_loss = latent_l2_loss(obs_z)
+        loss = rec_loss + latent_loss * self.decoder_lambda
+        self.log("l2_loss", latent_loss.item())
+        self.log("rep_loss", loss.item())
+        if self.LOG_FREQ % self.call == 0:
+            # n_stack = obs_shape[1] // 3
+            # obs_log = obs.reshape((obs_shape[0] * n_stack, 3) + obs_shape[-2:])
+            img_grid = torchvision.utils.make_grid(rec_obs[-3:], nrow=3, value_range=(-.5, .5), normalize=True)
+            img = ImageLogger(img_grid, 'CHW')
+            self.log("pixel_reconstruction", img)
+        return loss
+
+
+class PixelSPRModel(VectorSPRModel):
+    def __init__(self, *args, **kwargs):
+       AEModel.__init__(self, 'PixelSPR', *args, **kwargs)
+
+    def _setup_models(self):
+        enc_args = self.args.copy()
+        del enc_args['action_shape']
+        del enc_args['layers_dim']
+        self.encoder = PixelEncoder(**enc_args)
+        self.encoder.projection = ProjectionN(self.args['latent_dim'], self.args['layers_dim'][0])
+
+        if not self.encoder_only:
+            dec_args = self.args.copy()
+            del dec_args['state_shape']
+            del dec_args['layers_filter']
+            self.decoder = SPRDecoder(**dec_args)
+        AEModel._setup_models(self)
+
+
+class PixelSPRIModel(VectorSPRIModel):
+    def __init__(self, *args, **kwargs):
+       AEModel.__init__(self, 'PixelSPRI', *args, **kwargs)
+
+    def _setup_models(self):
+        enc_args = self.args.copy()
+        del enc_args['action_shape']
+        del enc_args['layers_dim']
+        self.encoder = PixelEncoder(**enc_args)
+
+        if not self.encoder_only:
+            dec_args = self.args.copy()
+            del dec_args['state_shape']
+            del dec_args['layers_filter']
+            self.decoder = SimpleSPRDecoder(**dec_args)
+        AEModel._setup_models(self)

@@ -113,28 +113,24 @@ def parse_srl_args(parser):
                          help='Decoder regularization \lambda value.')
     arg_srl.add_argument("--decoder-weight-decay", type=float, default=1e-7,
                          help='Decoder function Adam weight decay value.')
-    arg_srl.add_argument("--reconstruct-frequency", type=int, default=1,
+    arg_srl.add_argument("--representation-freq", type=int, default=1,
                          help='Steps interval for AE batch training.')
     arg_srl.add_argument("--encoder-only", action='store_true',
                          help='Whether if use the SRL loss.')
-    arg_srl.add_argument("--model-vector", action='store_true',
+    arg_srl.add_argument("--model-reconstruction", action='store_true',
                          help='Whether if use the Vector reconstruction model.')
-    arg_srl.add_argument("--model-vector-spr", action='store_true',
+    arg_srl.add_argument("--model-spr", action='store_true',
                          help='Whether if use the VectorSPR model.')
-    arg_srl.add_argument("--model-vector-target-dist", action='store_true',
+    arg_srl.add_argument("--model-target-dist", action='store_true',
                          help='Whether if use the VectorTargetDist reconstruction model.')
-    arg_srl.add_argument("--model-vector-spri", action='store_true',
-                         help='Whether if use the VectorSPRI model.')
-    arg_srl.add_argument("--model-vector-spri2", action='store_true',
-                         help='Whether if use the VectorSPRI model.')
+    arg_srl.add_argument("--model-spri", action='store_true',
+                         help='Whether if use the SPRI version model.')
     arg_srl.add_argument("--introspection-lambda", type=float, default=0,
                          help='Introspection loss function \lambda value, >0 to use introspection.')
     arg_srl.add_argument("--joint-optimization", action='store_true',
                          help='Whether if jointly optimize representation with RL updates.')
     # arg_srl.add_argument("--model-vector-difference", action='store_true',
     #                      help='Whether if use the VectorDifference reconstruction model.')
-    # arg_srl.add_argument("--model-rgb", action='store_true',
-    #                      help='Whether if use the RGB reconstruction model.')
     return arg_srl
 
 
@@ -287,32 +283,26 @@ def args2ae_config(args, env_params):
         'decoder_weight_decay': args.decoder_weight_decay,
         'joint_optimization': args.joint_optimization,
         'introspection_lambda': args.introspection_lambda,
-        'vector_shape': env_params['vector_shape'],
+        'state_shape': env_params['state_shape'],
         'action_shape': env_params['action_shape'],
         }
 
-    if args.model_vector:
-        assert env_params['is_vector'], 'Vector model requires is_vector flag.'
-        ae_models['Vector'] = model_params.copy()
-        ae_models['Vector'].update({'vector_shape': env_params['vector_shape']})
-    if args.model_vector_spr:
-        assert env_params['is_vector'], 'VectorSPR model requires is_vector flag.'
-        ae_models['VectorSPR'] = model_params.copy()
-        ae_models['VectorSPR'].update({
-            'vector_shape': env_params['vector_shape'],
-            'action_shape': env_params['action_shape'],
-            })
-    if args.model_vector_target_dist:
-        assert env_params['is_vector'], 'Vector model requires is_vector flag.'
-        ae_models['VectorTargetDist'] = model_params.copy()
-        ae_models['VectorTargetDist'].update({
-            'vector_shape': env_params['vector_shape']})
-    if args.model_vector_spri:
-        ae_models['VectorSPRI'] = model_params.copy()
-        ae_models['VectorSPRI'].update({
-            'vector_shape': env_params['vector_shape'],
-            'action_shape': env_params['action_shape'],
-            })
+    if args.is_vector:
+        model_name = 'Vector'
+    elif args.is_pixels:
+        model_name = 'Pixel'
+        model_params['layers_filter'] = [args.num_filters] * args.num_layers
+
+    if args.model_reconstruction:
+        model_name += ''
+    if args.model_spr:
+        model_name += 'SPR'
+    if args.model_target_dist:
+        model_name += 'TargetDist'
+    if args.model_spri:
+        model_name += 'SPRI'
+    
+    ae_models[model_name] = model_params.copy()
 
     return ae_models
 
@@ -322,7 +312,7 @@ def args2logpath(args, algo):
         if args.is_pixels and args.is_vector:
             path_prefix = 'multi'
         else:
-            path_prefix = 'pixels' if args.is_pixels else 'vector'
+            path_prefix = 'pixel' if args.is_pixels else 'vector'
         # Summary folder
         outfolder = f"logs_cf_{path_prefix}"
     else:
@@ -330,13 +320,13 @@ def args2logpath(args, algo):
 
     path_suffix = ''
     # method labels
-    if args.model_vector:
+    if args.model_reconstruction:
         path_suffix += '-rec'
-    if args.model_vector_spr:
+    if args.model_spr:
         path_suffix += '-spr'
-    if args.model_vector_target_dist:
+    if args.model_target_dist:
         path_suffix += '-drec'
-    if args.model_vector_spri:
+    if args.model_spri:
         path_suffix += '-spri'
     # extra labels
     if args.introspection_lambda != 0.:
