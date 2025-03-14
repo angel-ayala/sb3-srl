@@ -118,13 +118,15 @@ def parse_srl_args(parser):
     arg_srl.add_argument("--encoder-only", action='store_true',
                          help='Whether if use the SRL loss.')
     arg_srl.add_argument("--model-reconstruction", action='store_true',
-                         help='Whether if use the Vector reconstruction model.')
+                         help='Whether if use the Reconstruction model.')
     arg_srl.add_argument("--model-spr", action='store_true',
-                         help='Whether if use the VectorSPR model.')
-    arg_srl.add_argument("--model-target-dist", action='store_true',
-                         help='Whether if use the VectorTargetDist reconstruction model.')
-    arg_srl.add_argument("--model-spri", action='store_true',
-                         help='Whether if use the SPRI version model.')
+                         help='Whether if use the SelfPredictive model.')
+    arg_srl.add_argument("--model-reconstruction-dist", action='store_true',
+                         help='Whether if use the ReconstructionDist reconstruction model.')
+    arg_srl.add_argument("--model-ispr", action='store_true',
+                         help='Whether if use the InfoNCE SimpleSPR version model.')
+    arg_srl.add_argument("--model-i2spr", action='store_true',
+                         help='Whether if use the Introspective InfoNCE SimpleSPR model.')
     arg_srl.add_argument("--introspection-lambda", type=float, default=0,
                          help='Introspection loss function \lambda value, >0 to use introspection.')
     arg_srl.add_argument("--joint-optimization", action='store_true',
@@ -273,8 +275,11 @@ def args2ae_config(args, env_params):
     ae_models = {}
     # image_shape = env_params['image_shape']
     model_params = {
+        'action_shape': env_params['action_shape'],
+        'state_shape': env_params['state_shape'],
         'latent_dim': args.latent_dim,
         'layers_dim': [args.hidden_dim] * args.num_layers,
+        'layers_filter': [args.num_filters] * args.num_layers,
         'encoder_lr': args.encoder_lr,
         'decoder_lr': args.decoder_lr,
         'encoder_only': args.encoder_only,
@@ -283,26 +288,32 @@ def args2ae_config(args, env_params):
         'decoder_weight_decay': args.decoder_weight_decay,
         'joint_optimization': args.joint_optimization,
         'introspection_lambda': args.introspection_lambda,
-        'state_shape': env_params['state_shape'],
-        'action_shape': env_params['action_shape'],
+        'is_pixel': False,
+        'is_multimodal': False,
         }
 
-    if args.is_vector:
-        model_name = 'Vector'
-    elif args.is_pixels:
-        model_name = 'Pixel'
-        model_params['layers_filter'] = [args.num_filters] * args.num_layers
-
     if args.model_reconstruction:
-        model_name += ''
+        model_name = 'Reconstruction'
     if args.model_spr:
-        model_name += 'SPR'
-    if args.model_target_dist:
-        model_name += 'TargetDist'
-    if args.model_spri:
-        model_name += 'SPRI'
-    
+        model_name = 'SelfPredictive'
+    if args.model_reconstruction_dist:
+        model_name = 'ReconstructionDist'
+    if args.model_ispr:
+        model_name = 'InfoSPR'
+    if args.model_i2spr:
+        model_name = 'IntrospectiveInfoSPR'
+
+    if args.is_pixels:
+        model_params['is_pixel'] = True
+
     ae_models[model_name] = model_params.copy()
+
+    # is_multimodal = args.is_pixels and args.is_vector
+    # if args.is_vector and args.is_pixels:
+    #     model_name = 'Pixel'
+    #     ae_models[model_name] = model_params.copy()
+    #     ae_models[model_name]['layers_filter'] = [args.num_filters] * args.num_layers
+    #     ae_models[model_name]['encoder_only'] = True
 
     return ae_models
 
@@ -324,10 +335,12 @@ def args2logpath(args, algo):
         path_suffix += '-rec'
     if args.model_spr:
         path_suffix += '-spr'
-    if args.model_target_dist:
+    if args.model_reconstruction_dist:
         path_suffix += '-drec'
-    if args.model_spri:
-        path_suffix += '-spri'
+    if args.model_ispr:
+        path_suffix += '-ispr'
+    if args.model_i2spr:
+        path_suffix += '-i2spr'
     # extra labels
     if args.introspection_lambda != 0.:
         path_suffix += '-intr'

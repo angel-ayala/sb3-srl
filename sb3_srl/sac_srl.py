@@ -14,7 +14,7 @@ from torch.nn import functional as F
 from stable_baselines3.common.policies import ContinuousCritic
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.type_aliases import PyTorchObs
-from stable_baselines3.common.utils import get_parameters_by_name, polyak_update
+from stable_baselines3.common.utils import polyak_update
 
 from stable_baselines3 import SAC
 from stable_baselines3.sac.policies import Actor
@@ -26,11 +26,11 @@ from sb3_srl.srl import SRLAlgorithm
 
 class SRLSACPolicy(SACPolicy, SRLPolicy):
     def __init__(self, *args,
-                 ae_type: str = 'Vector', ae_params: dict = {},
+                 ae_config: dict = {},
                  encoder_tau: float = 0.999, **kwargs):
-        self.features_dim = ae_params['latent_dim']
+        self.features_dim = SRLPolicy.get_features_dim(ae_config)
         SACPolicy.__init__(self, *args, **kwargs)
-        SRLPolicy.__init__(self, ae_type, ae_params, encoder_tau)
+        SRLPolicy.__init__(self, ae_config, encoder_tau)
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)

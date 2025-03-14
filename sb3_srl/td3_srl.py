@@ -26,11 +26,11 @@ from sb3_srl.srl import SRLAlgorithm
 
 class SRLTD3Policy(TD3Policy, SRLPolicy):
     def __init__(self, *args,
-                 ae_type: str = 'Vector', ae_params: dict = {},
+                 ae_config: dict = {},
                  encoder_tau: float = 0.999, **kwargs):
-        self.features_dim = ae_params['latent_dim']
+        self.features_dim = SRLPolicy.get_features_dim(ae_config)
         TD3Policy.__init__(self, *args, **kwargs)
-        SRLPolicy.__init__(self, ae_type, ae_params, encoder_tau)
+        SRLPolicy.__init__(self, ae_config, encoder_tau)
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)

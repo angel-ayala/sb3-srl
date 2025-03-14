@@ -75,13 +75,11 @@ if args.is_srl:
     ae_config = list(args2ae_config(args, env_params).items())
     if len(ae_config) == 0:
         raise ValueError("No SRL model selected")
-    ae_type, ae_params = ae_config[0]
 
     # Policy args
     policy_args = {
         'net_arch': [256, 256],
-        'ae_type': ae_type,
-        'ae_params': ae_params,
+        'ae_config': ae_config,
         'encoder_tau': args.encoder_tau
         }
 else:

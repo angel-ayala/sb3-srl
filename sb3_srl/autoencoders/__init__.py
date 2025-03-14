@@ -5,13 +5,11 @@ Created on Thu Feb  6 11:18:39 2025
 
 @author: angel
 """
-from .models import VectorModel
-from .models import VectorSPRModel
-from .models import VectorTargetDistModel
-from .models import VectorSPRIModel
-from .models import PixelModel
-from .models import PixelSPRModel
-from .models import PixelSPRIModel
+from .models import ReconstructionModel
+from .models import ReconstructionDistModel
+from .models import SelfPredictiveModel
+from .models import InfoSPRModel
+from .models import IntrospectiveInfoSPR
 
 
 def instance_autoencoder(ae_type: str, ae_params: dict):
