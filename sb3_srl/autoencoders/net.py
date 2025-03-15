@@ -292,16 +292,13 @@ class MultimodalEncoder(nn.Module):
         latent_dim = vector_encoder.feature_dim
         self.vector = vector_encoder
         self.pixel = pixel_encoder
-        self.fusion_conv = nn.Conv1d(2, hidden_dim, 1)
-        self.fusion_conv2 = nn.Conv1d(hidden_dim, latent_dim, latent_dim)
-        # self.fusion_lin = nn.Linear(latent_dim, latent_dim)
+        self.fusion_conv = nn.Conv1d(2, 1, 1)
 
     def forward(self, obs, detach=False):
         z_1 = self.vector(obs['vector']).unsqueeze(1)
         z_2 = self.pixel(obs['pixel']).unsqueeze(1)
         z_cat = th.cat((z_1, z_2), dim=1)
-        z = self.fusion_conv(z_cat)
-        z = self.fusion_conv2(z).squeeze(-1)
+        z = self.fusion_conv(z_cat).squeeze(1)
         if detach:
             z = z.detach()
         return th.tanh(z)

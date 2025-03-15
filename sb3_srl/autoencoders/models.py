@@ -82,6 +82,8 @@ class RepresentationModel:
 
     def log_mi(self, observation_z, q_min):
         # Mutual Information to assess latent features' impact
+        if self.is_multimodal:
+            observation_z = observation_z['pixel']
         mi = compute_mutual_information(observation_z, q_min)
         self.log("mutual_information_zq", mi.mean())
         return mi
@@ -248,6 +250,8 @@ class RepresentationModel:
 
     def compute_success_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
         # infer the probabilities with a MLP model with NLL
+        if self.is_multimodal:
+            observations_z = observations_z['pixel']
         success_hat = self.decoder.probability(observations_z, actions)
         p_loss, success_prob, success_loss = IntrospectionBelief.success_loss(self, success_hat, current_q_values, next_v_values, dones)
         self.log("probability_success", success_prob.item())
@@ -487,6 +491,8 @@ class IntrospectiveInfoSPR(InfoSPRModel, IntrospectionBelief):
 
     def compute_success_loss(self, observations_z, actions, current_q_values, next_v_values, dones):
         # infer the probabilities with a MLP model with NLL
+        if self.is_multimodal:
+            observations_z = observations_z['pixel']
         success_hat = self.infer_Ps(observations_z, actions)
         p_loss, success_prob, success_loss = IntrospectionBelief.success_loss(
             self, success_hat, current_q_values, next_v_values, dones)
