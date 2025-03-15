@@ -133,8 +133,14 @@ class RepresentationModel:
 
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
-        self.encoder_optim = optim_class(self.encoder.parameters(),
-                                         lr=encoder_lr, **optim_kwargs)
+        if self.is_multimodal:
+            self.encoder_optim = [optim_class(self.encoder.pixel.parameters(),
+                                              lr=encoder_lr, **optim_kwargs),
+                                  optim_class(self.encoder.vector.parameters(),
+                                              lr=encoder_lr, **optim_kwargs),]
+        else:
+            self.encoder_optim = optim_class(self.encoder.parameters(),
+                                             lr=encoder_lr, **optim_kwargs)
 
     def dec_optimizer(self, decoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
@@ -158,10 +164,18 @@ class RepresentationModel:
             self.encoder_target.to(device)
 
     def encoder_optim_zero_grad(self):
-        self.encoder_optim.zero_grad()
+        if self.is_multimodal:
+            for e in self.encoder_optim:
+                e.zero_grad()
+        else:
+            self.encoder_optim.zero_grad()
 
     def encoder_optim_step(self):
-        self.encoder_optim.step()
+        if self.is_multimodal:
+            for e in self.encoder_optim:
+                e.step()
+        else:
+            self.encoder_optim.step()
 
     def decoder_optim_zero_grad(self):
         if self.decoder is not None:
@@ -257,6 +271,12 @@ class RepresentationModel:
         self.log("probability_success", success_prob.item())
         self.log("probability_loss", success_loss.item())
         return p_loss
+
+    def compute_modal_loss(self, obs):
+        vector_z, pixel_z = self.encoder.forward_z_prj(obs)
+        loss = info_nce_loss(vector_z, pixel_z)
+        self.log('modal_loss', loss.item())
+        return loss * 1e-5
 
     def __repr__(self):
         if self.is_pixel:
@@ -421,10 +441,14 @@ class InfoSPRModel(RepresentationModel):
         # compare next_latent with transition
         contrastive = info_nce_loss(obs_z1, obs_z1_hat)
         # L2 over Z
-        latent_loss = latent_l2_loss(obs_z1)
+        if self.is_multimodal:
+            z1, z2 = self.encoder.forward_z(observations)
+            latent_loss = 0.5 * (latent_l2_loss(z1) + latent_l2_loss(z2))
+        else:
+            latent_loss = latent_l2_loss(obs_z1)
+        self.log("l2_loss", latent_loss.item())
         self.update_stopper(latent_loss)
         loss = contrastive + latent_loss * self.decoder_lambda
-        self.log("l2_loss", latent_loss.item())
         self.log("rep_loss", loss.item())
         return loss  # *2.
 

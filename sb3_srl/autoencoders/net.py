@@ -227,9 +227,9 @@ class PixelEncoder(nn.Module):
 
     def forward_conv(self, obs):
         obs = obs.float() / 255.  # normalize
-        conv = th.relu(self.convs[0](obs.float()))
+        conv = F.leaky_relu(self.convs[0](obs.float()))
         for i in range(1, self.num_layers):
-            conv = th.relu(self.convs[i](conv))
+            conv = F.leaky_relu(self.convs[i](conv))
         return conv
 
     def forward(self, obs, detach=False):
@@ -276,35 +276,40 @@ class PixelDecoder(nn.Module):
         ])
 
     def forward(self, h):
-        h = th.relu(self.fc(h))
+        h = F.leaky_relu(self.fc(h))
         deconv = h.view(-1, self.num_filters, self.out_dim, self.out_dim)
 
         for i in range(len(self.deconvs) - 1):
-            deconv = th.relu(self.deconvs[i](deconv))
+            deconv = F.leaky_relu(self.deconvs[i](deconv))
         obs = self.deconvs[-1](deconv)
 
         return obs
 
 
 class MultimodalEncoder(nn.Module):
-    def __init__(self, vector_encoder, pixel_encoder, hidden_dim=256):
+    def __init__(self, vector_encoder, pixel_encoder):
         super(MultimodalEncoder, self).__init__()
         latent_dim = vector_encoder.feature_dim
         self.vector = vector_encoder
+        pixel_encoder.fusion_conv = nn.Conv1d(2, 1, 1)
+        pixel_encoder.projection = ProjectionN(latent_dim, latent_dim)
         self.pixel = pixel_encoder
-        self.fusion_conv = nn.Conv1d(2, 1, 1)
+
+    def forward_z(self, obs, detach=False):
+        z_1 = self.vector(obs['vector'])
+        z_2 = self.pixel(obs['pixel'])
+        return z_1, z_2
+
+    def forward_z_prj(self, obs, detach=False):
+        z_1, z_2 = self.forward_z(obs)
+        z_2 = self.pixel.projection(z_2)
+        return z_1, z_2
 
     def forward(self, obs, detach=False):
-        z_1 = self.vector(obs['vector']).unsqueeze(1)
-        z_2 = self.pixel(obs['pixel']).unsqueeze(1)
-        z_cat = th.cat((z_1, z_2), dim=1)
-        z = self.fusion_conv(z_cat).squeeze(1)
+        z_1, z_2 = self.forward_z_prj(obs)
+        # z_2 = F.leaky_relu(z_2)
+        z_cat = th.cat((z_1.unsqueeze(1), z_2.unsqueeze(1)), dim=1)
+        z = self.pixel.fusion_conv(z_cat).squeeze(0)
         if detach:
             z = z.detach()
         return th.tanh(z)
-    
-    def copy_weights_from(self, source):
-        """Tie hidden layers"""
-        # only tie hidden layers
-        for i in range(self.num_layers):
-            tie_weights(src=source.h_layers[i], trg=self.h_layers[i])
