@@ -17,6 +17,7 @@ from stable_baselines3.common.logger import Image as ImageLogger
 from sb3_srl.introspection import IntrospectionBelief
 from sb3_srl.utils import EarlyStopper
 
+from .net import MultimodalEncoder
 from .net import PixelDecoder
 from .net import PixelEncoder
 from .net import ProjectionN
@@ -88,7 +89,17 @@ class RepresentationModel:
     def _setup_encoder(self):
         enc_args = self.args.copy()
         del enc_args['action_shape']
-        if self.is_pixel:
+        if self.is_multimodal:
+            vector_args = enc_args.copy()
+            del vector_args['layers_filter']
+            vector_args['state_shape'] = enc_args['state_shape'][0]
+            vector_args['layers_dim'] = [enc_args['layers_dim'][-1]] * (len(enc_args['layers_dim']) - 1)
+            pixel_args = enc_args.copy()
+            del pixel_args['layers_dim']
+            pixel_args['state_shape'] = enc_args['state_shape'][1]
+            self.encoder = MultimodalEncoder(VectorEncoder(**vector_args),
+                                             PixelEncoder(**pixel_args))
+        elif self.is_pixel:
             del enc_args['layers_dim']
             self.encoder = PixelEncoder(**enc_args)
         else:
@@ -134,11 +145,13 @@ class RepresentationModel:
 
     def apply(self, function):
         self.encoder.apply(function)
-        self.decoder.apply(function)
+        if self.decoder is not None:
+            self.decoder.apply(function)
 
     def to(self, device):
         self.encoder.to(device)
-        self.decoder.to(device)
+        if self.decoder is not None:
+            self.decoder.to(device)
         if hasattr(self, 'encoder_target'):
             self.encoder_target.to(device)
 
@@ -149,13 +162,22 @@ class RepresentationModel:
         self.encoder_optim.step()
 
     def decoder_optim_zero_grad(self):
-        self.decoder_optim.zero_grad()
+        if self.decoder is not None:
+            self.decoder_optim.zero_grad()
 
     def decoder_optim_step(self):
-        self.decoder_optim.step()
+        if self.decoder is not None:
+            self.decoder_optim.step()
 
     def forward_z(self, observation, detach=False):
+        if self.is_multimodal:
+            return {'pixel': self.encoder(observation, detach=detach)}
         return self.encoder(observation, detach=detach)
+
+    def target_forward_z(self, observation, detach=False):
+        if self.is_multimodal:
+            return {'pixel': self.encoder_target(observation, detach=detach)}
+        return self.encoder_target(observation, detach=detach)
 
     def decode_latent(self, observation_z):
         return self.decoder(observation_z)
@@ -169,7 +191,8 @@ class RepresentationModel:
         :param mode: if true, set to training mode, else set to evaluation mode
         """
         self.encoder.train(mode)
-        self.decoder.train(mode)
+        if self.decoder is not None:
+            self.decoder.train(mode)
 
     def compute_representation_loss(self, observation, action, next_observation):
         raise NotImplementedError()
@@ -184,9 +207,9 @@ class RepresentationModel:
         self.scaler = MinMaxScaler(feature_range=feature_range)
         self.scaler_ok = False
 
-    def fit_scaler(self, samples):
+    def fit_observation(self, observation_space):
         if self.scaler is not None:
-            self.scaler.fit(samples)
+            self.scaler.fit([observation_space.low, observation_space.high])
             self.scaler_ok = True
 
     def preprocess(self, observations):
@@ -308,6 +331,8 @@ class SelfPredictiveModel(RepresentationModel):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
+        if self.is_pixel:
+            dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
         self.decoder = SPRDecoder(**dec_args)
 
     def set_stopper(self, patience, threshold=0.):
@@ -380,6 +405,8 @@ class InfoSPRModel(RepresentationModel):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
+        if self.is_pixel:
+            dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
         self.decoder = SimpleSPRDecoder(**dec_args)
 
     def compute_representation_loss(self, observations, actions, next_observations):

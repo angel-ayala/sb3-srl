@@ -5,6 +5,12 @@ Created on Sat Mar  8 11:22:57 2025
 
 @author: angel
 """
+import gymnasium as gym
+import torch as th
+from torch import nn
+
+from stable_baselines3.common.preprocessing import get_flattened_obs_dim
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 
 class EarlyStopper:
@@ -30,3 +36,24 @@ class EarlyStopper:
                 print('EarlyStopper')
                 self.stop = True
         return self.stop
+
+
+class DictFlattenExtractor(BaseFeaturesExtractor):
+    """
+    Feature extract that flatten the dict input.
+    Used as a placeholder when feature extraction is not needed.
+
+    :param observation_space: The observation space of the environment
+    """
+
+    def __init__(self, observation_space: gym.Space) -> None:
+        super().__init__(observation_space, get_flattened_obs_dim(observation_space))
+        self.flatten = nn.Flatten()
+
+    def forward(self, observations: dict) -> th.Tensor:
+        if isinstance(observations, dict): # it is expected to have dict, but in case not, is a th.Tensor
+            obs_stack = []
+            for k, obs in observations.items():
+                obs_stack.append(obs)
+            observations = th.cat(obs_stack)
+        return self.flatten(observations)

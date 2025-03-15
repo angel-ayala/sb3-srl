@@ -191,8 +191,8 @@ def instance_env(args, name='webots_drone:webots_drone/DroneEnvDiscrete-v0',
             del env_params['vector_shape']
         if 'image_shape' in env_params.keys():
             del env_params['image_shape']
-        if 'obs_space' in env_params.keys():
-            del env_params['obs_space']
+        # if 'obs_space' in env_params.keys():
+        #     del env_params['obs_space']
         if 'target_quadrants' in env_params.keys():
             del env_params['target_quadrants']
         if 'flight_area' in env_params.keys():
@@ -247,8 +247,8 @@ def wrap_env(env, env_params):
                                     target_dist=env_params['target_dist2obs'],
                                     add_action=env_params['action2obs'],
                                     **env_range)
-        env_params['image_shape'] = env.observation_space[0].shape
-        env_params['vector_shape'] = env.observation_space[1].shape
+        env_params['state_shape'] = (env.observation_space['vector'].shape,
+                                     env.observation_space['pixel'].shape)
 
     else:
         if env_params['is_vector']:
@@ -262,11 +262,7 @@ def wrap_env(env, env_params):
         if env_params['frame_stack'] > 1:
             env = ObservationStack(env, k=env_params['frame_stack'])
 
-        env_params['vector_shape'] = env.observation_space.shape if env_params['is_vector'] else None
-        env_params['image_shape'] = env.observation_space.shape if env_params['is_pixels'] else None
         env_params['state_shape'] = env.observation_space.shape
-
-    env_params['obs_space'] = (env_params['image_shape'], env_params['vector_shape'])
 
     return env, env_params
 
@@ -288,34 +284,24 @@ def args2ae_config(args, env_params):
         'decoder_weight_decay': args.decoder_weight_decay,
         'joint_optimization': args.joint_optimization,
         'introspection_lambda': args.introspection_lambda,
-        'is_pixel': False,
-        'is_multimodal': False,
+        'is_pixel': args.is_pixels,
+        'is_multimodal': args.is_pixels and args.is_vector,
         }
 
     if args.model_reconstruction:
         model_name = 'Reconstruction'
-    if args.model_spr:
+    elif args.model_spr:
         model_name = 'SelfPredictive'
-    if args.model_reconstruction_dist:
+    elif args.model_reconstruction_dist:
         model_name = 'ReconstructionDist'
-    if args.model_ispr:
+    elif args.model_ispr:
         model_name = 'InfoSPR'
-    if args.model_i2spr:
+    elif args.model_i2spr:
         model_name = 'IntrospectiveInfoSPR'
+    else:
+        raise ValueError('SRL model not recognized...')
 
-    if args.is_pixels:
-        model_params['is_pixel'] = True
-
-    ae_models[model_name] = model_params.copy()
-
-    # is_multimodal = args.is_pixels and args.is_vector
-    # if args.is_vector and args.is_pixels:
-    #     model_name = 'Pixel'
-    #     ae_models[model_name] = model_params.copy()
-    #     ae_models[model_name]['layers_filter'] = [args.num_filters] * args.num_layers
-    #     ae_models[model_name]['encoder_only'] = True
-
-    return ae_models
+    return model_name, model_params
 
 
 def args2logpath(args, algo):

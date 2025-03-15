@@ -94,8 +94,8 @@ class SRLSAC(SAC, SRLAlgorithm):
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
 
             with th.no_grad():
-                obs_z = self.enc_obs_target(replay_data.observations)
-                next_obs_z = self.enc_obs_target(replay_data.next_observations)
+                obs_z = self.target_forward_z(replay_data.observations)
+                next_obs_z = self.target_forward_z(replay_data.next_observations)
 
             # We need to sample because `log_std` may have changed between two gradient steps
             if self.use_sde:
@@ -140,7 +140,7 @@ class SRLSAC(SAC, SRLAlgorithm):
             # Get current Q-values estimates for each critic network
             # using action from the replay buffer
             if self.policy.rep_model.joint_optimization:
-                obs_z = self.enc_obs(replay_data.observations)
+                obs_z = self.forward_z(replay_data.observations)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
             # Compute critic loss
@@ -177,7 +177,7 @@ class SRLSAC(SAC, SRLAlgorithm):
             # Update target first
             self.update_encoder_target()
             with th.no_grad():
-                _obs_z = self.enc_obs_target(replay_data.observations)
+                _obs_z = self.target_forward_z(replay_data.observations)
             actions_pi, log_prob = self.actor.action_log_prob(_obs_z)
             q_values_pi = th.cat(self.critic(_obs_z, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)

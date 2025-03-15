@@ -22,6 +22,7 @@ from stable_baselines3.td3.policies import TD3Policy
 
 from sb3_srl.srl import SRLPolicy
 from sb3_srl.srl import SRLAlgorithm
+from sb3_srl.utils import DictFlattenExtractor
 
 
 class SRLTD3Policy(TD3Policy, SRLPolicy):
@@ -29,6 +30,7 @@ class SRLTD3Policy(TD3Policy, SRLPolicy):
                  ae_config: dict = {},
                  encoder_tau: float = 0.999, **kwargs):
         self.features_dim = SRLPolicy.get_features_dim(ae_config)
+        kwargs['features_extractor_class'] = DictFlattenExtractor
         TD3Policy.__init__(self, *args, **kwargs)
         SRLPolicy.__init__(self, ae_config, encoder_tau)
 
@@ -43,7 +45,7 @@ class SRLTD3Policy(TD3Policy, SRLPolicy):
         return ContinuousCritic(**critic_kwargs).to(self.device)
 
     def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
-        return SRLPolicy._predict(self, observation)
+        return SRLPolicy._predict(self, observation, deterministic)
 
     def set_training_mode(self, mode: bool) -> None:
         return SRLPolicy.set_training_mode(self, mode)
@@ -90,8 +92,8 @@ class SRLTD3(TD3, SRLAlgorithm):
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
 
             with th.no_grad():
-                obs_z = self.enc_obs_target(replay_data.observations)
-                next_obs_z = self.enc_obs_target(replay_data.next_observations)
+                obs_z = self.target_forward_z(replay_data.observations)
+                next_obs_z = self.target_forward_z(replay_data.next_observations)
                 # Select action according to policy and add clipped noise
                 noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
                 noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip)
@@ -105,7 +107,7 @@ class SRLTD3(TD3, SRLAlgorithm):
 
             # Get current Q-values estimates for each critic network
             if self.policy.rep_model.joint_optimization:
-                obs_z = self.enc_obs(replay_data.observations)
+                obs_z = self.forward_z(replay_data.observations)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
             # Compute critic loss
@@ -140,7 +142,7 @@ class SRLTD3(TD3, SRLAlgorithm):
             if self._n_updates % self.policy_delay == 0:
                 # update representations
                 self.update_encoder_target()
-                _obs_z = self.enc_obs_target(replay_data.observations).detach()
+                _obs_z = self.target_forward_z(replay_data.observations)
                 # Compute actor loss
                 actor_loss = -self.critic.q1_forward(_obs_z, self.actor(_obs_z)).mean()
                 actor_losses.append(actor_loss.item())

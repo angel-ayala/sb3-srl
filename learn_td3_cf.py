@@ -72,10 +72,7 @@ env, env_params = wrap_env(env, env_params)  # observation preprocesing
 if args.is_srl:
     algo, policy = SRLTD3, SRLTD3Policy
     # Autoencoder parameters
-    ae_config = list(args2ae_config(args, env_params).items())
-    if len(ae_config) == 0:
-        raise ValueError("No SRL model selected")
-
+    ae_config = args2ae_config(args, env_params)
     # Policy args
     policy_args = {
         'net_arch': [256, 256],

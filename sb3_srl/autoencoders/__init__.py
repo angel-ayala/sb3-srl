@@ -5,6 +5,7 @@ Created on Thu Feb  6 11:18:39 2025
 
 @author: angel
 """
+from .models import RepresentationModel
 from .models import ReconstructionModel
 from .models import ReconstructionDistModel
 from .models import SelfPredictiveModel
@@ -12,7 +13,7 @@ from .models import InfoSPRModel
 from .models import IntrospectiveInfoSPR
 
 
-def instance_autoencoder(ae_type: str, ae_params: dict):
+def instance_autoencoder(ae_type: str, ae_params: dict) -> RepresentationModel:
     ae_params_ = ae_params.copy()
     del ae_params_['encoder_steps']
     del ae_params_['encoder_lr']
