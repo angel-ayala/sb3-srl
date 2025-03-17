@@ -126,7 +126,7 @@ class SRLTD3(TD3, SRLAlgorithm):
                 rep_loss += self.policy.rep_model.compute_success_loss(
                     obs_z, replay_data.actions, Q_min,
                     next_v_values, replay_data.dones)
-            if self.policy.rep_model.is_multimodal:
+            if self.policy.is_multimodal:
                 rep_loss += self.policy.rep_model.compute_modal_loss(replay_data.observations)
 
             if self.policy.rep_model.joint_optimization:

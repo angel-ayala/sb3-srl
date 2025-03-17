@@ -309,7 +309,7 @@ class MultimodalEncoder(nn.Module):
         z_1, z_2 = self.forward_z_prj(obs)
         # z_2 = F.leaky_relu(z_2)
         z_cat = th.cat((z_1.unsqueeze(1), z_2.unsqueeze(1)), dim=1)
-        z = self.pixel.fusion_conv(z_cat).squeeze(0)
+        z = self.pixel.fusion_conv(z_cat).squeeze(1)
         if detach:
             z = z.detach()
         return th.tanh(z)

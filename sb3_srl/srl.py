@@ -16,9 +16,11 @@ from sb3_srl.autoencoders import instance_autoencoder
 class SRLPolicy:
     def __init__(self, ae_config: Tuple[str, dict], encoder_tau: float = 0.999):
         self.encoder_tau = encoder_tau
-        self.is_pixel = False
-        self.is_multimodal = False
         self.make_autencoder(ae_config)
+
+    @property
+    def is_multimodal(self):
+        return self.rep_model.is_multimodal
 
     @staticmethod
     def get_features_dim(ae_config):
@@ -72,9 +74,11 @@ class SRLAlgorithm:
     def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
         state_dicts = ["policy.rep_model.encoder"]
         state_dicts += ["policy.rep_model.encoder_optim"]
+        if self.policy.is_multimodal:
+            state_dicts += ["policy.rep_model.encoder_pixel_optim"]
         state_dicts += ["policy.rep_model.decoder"]
         state_dicts += ["policy.rep_model.decoder_optim"]
-        if hasattr(self.policy, "rep_model.probability"):
+        if self.policy.rep_model.is_introspection:
             state_dicts += ["policy.rep_model.probability"]
             state_dicts += ["policy.rep_model.probability_optim"]
 

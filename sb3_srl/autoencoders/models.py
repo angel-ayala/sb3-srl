@@ -134,10 +134,10 @@ class RepresentationModel:
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
         if self.is_multimodal:
-            self.encoder_optim = [optim_class(self.encoder.pixel.parameters(),
-                                              lr=encoder_lr, **optim_kwargs),
-                                  optim_class(self.encoder.vector.parameters(),
-                                              lr=encoder_lr, **optim_kwargs),]
+            self.encoder_optim = optim_class(self.encoder.vector.parameters(),
+                                             lr=encoder_lr, **optim_kwargs)
+            self.encoder_pixel_optim = optim_class(self.encoder.pixel.parameters(),
+                                                   lr=encoder_lr, **optim_kwargs)
         else:
             self.encoder_optim = optim_class(self.encoder.parameters(),
                                              lr=encoder_lr, **optim_kwargs)
@@ -164,18 +164,14 @@ class RepresentationModel:
             self.encoder_target.to(device)
 
     def encoder_optim_zero_grad(self):
+        self.encoder_optim.zero_grad()
         if self.is_multimodal:
-            for e in self.encoder_optim:
-                e.zero_grad()
-        else:
-            self.encoder_optim.zero_grad()
+            self.encoder_pixel_optim.zero_grad()
 
     def encoder_optim_step(self):
+        self.encoder_optim.step()
         if self.is_multimodal:
-            for e in self.encoder_optim:
-                e.step()
-        else:
-            self.encoder_optim.step()
+            self.encoder_pixel_optim.step()
 
     def decoder_optim_zero_grad(self):
         if self.decoder is not None:
