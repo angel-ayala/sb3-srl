@@ -5,12 +5,20 @@ Created on Thu Feb  6 12:48:04 2025
 
 @author: angel
 """
+from typing import Any, Callable, Optional, List, SupportsFloat, Union
+from gymnasium.core import ActType, ObsType
+import time
 import json
+import sys
 import numpy as np
 import gymnasium as gym
-from stable_baselines3.common.callbacks import BaseCallback
+from pathlib import Path
+
+from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.utils import get_latest_run_id
 
+from webots_drone.data import StoreStepData
 from webots_drone.envs.preprocessor import MultiModalObservation
 from webots_drone.envs.preprocessor import CustomVectorObservation
 from webots_drone.stack import ObservationStack
@@ -22,6 +30,12 @@ def list_of_float(arg):
 
 def list_of_int(arg):
     return list(map(int, arg.split(',')))
+
+
+def list_of_targets(arg):
+    if 'random' in arg or 'sample' in arg:
+        return arg
+    return list_of_int(arg)
 
 
 def uav_data_list(arg):
@@ -49,7 +63,7 @@ def parse_crazyflie_env_args(parser):
                          help='Minimum height distance to begin the mission.')
     arg_env.add_argument("--altitude-limits", type=list_of_float,
                          default=[0.25, 2.], help='Vertical flight limits.')
-    arg_env.add_argument("--target-pos", type=int, default=None,
+    arg_env.add_argument("--target-pos", type=list_of_targets, default=None,
                          help='Cuadrant number for target position.')
     arg_env.add_argument("--target-dim", type=list_of_float, default=[0.05, 0.02],
                          help="Target's dimension size.")
@@ -162,75 +176,62 @@ def parse_utils_args(parser):
     return arg_utils
 
 
-def instance_env(args, name='webots_drone:webots_drone/DroneEnvDiscrete-v0',
-                 seed=666):
-    env_params = dict()
-    if isinstance(args, dict):
-        env_params = args.copy()
-        if 'state_shape' in env_params.keys():
-            del env_params['state_shape']
-        if 'action_shape' in env_params.keys():
-            del env_params['action_shape']
-        if 'is_vector' in env_params.keys():
-            del env_params['is_vector']
-        if 'frame_stack' in env_params.keys():
-            del env_params['frame_stack']
-        if 'target_pos2obs' in env_params.keys():
-            del env_params['target_pos2obs']
-        if 'target_dist2obs' in env_params.keys():
-            del env_params['target_dist2obs']
-        if 'target_dim2obs' in env_params.keys():
-            del env_params['target_dim2obs']
-        if 'action2obs' in env_params.keys():
-            del env_params['action2obs']
-        if 'uav_data' in env_params.keys():
-            del env_params['uav_data']
-        if 'is_multimodal' in env_params.keys():
-            del env_params['is_multimodal']
-        if 'vector_shape' in env_params.keys():
-            del env_params['vector_shape']
-        if 'image_shape' in env_params.keys():
-            del env_params['image_shape']
-        # if 'obs_space' in env_params.keys():
-        #     del env_params['obs_space']
-        if 'target_quadrants' in env_params.keys():
-            del env_params['target_quadrants']
-        if 'flight_area' in env_params.keys():
-            del env_params['flight_area']
-    else:
-        env_params = dict(
-            time_limit_seconds=args.time_limit,
-            max_no_action_seconds=args.time_no_action,
-            frame_skip=args.frame_skip,
-            goal_threshold=args.goal_threshold,
-            init_altitude=args.init_altitude,
-            altitude_limits=args.altitude_limits,
-            target_pos=args.target_pos,
-            target_dim=args.target_dim,
-            is_pixels=args.is_pixels,
-            zone_steps=args.zone_steps)
+def args2env_params(args):
+    _args = args
+    if not isinstance(_args, dict):
+        _args = vars(_args)
+    env_params = {
+        'time_limit_seconds': _args.get('time_limit', 60),
+        'max_no_action_seconds': _args.get('time_no_action', 5),
+        'frame_skip': _args.get('frame_skip', 6),
+        'goal_threshold': _args.get('goal_threshold', 0.25),
+        'init_altitude': _args.get('init_altitude', 0.3),
+        'altitude_limits': _args.get('altitude_limits', [0.25, 2.]),
+        'target_pos': _args.get('target_pos', None),
+        'target_dim': _args.get('target_dim', [.05, .02]),
+        'is_pixels': _args.get('is_pixels', False),
+        'is_vector': _args.get('is_vector', False),
+        'frame_stack': _args.get('frame_stack', 1),
+        'target_pos2obs': _args.get('add_target_pos', False),
+        'target_dist2obs': _args.get('add_target_dist', False),
+        'target_dim2obs': _args.get('add_target_dim', False),
+        'action2obs': _args.get('add_action', False),
+        'uav_data': _args.get('uav_data',
+                              ['imu', 'gyro', 'gps', 'gps_vel', 'north', 'dist_sensors']),
+        }
+    env_params['is_multimodal'] = env_params['is_pixels'] and env_params['is_vector']
+    return env_params
 
+
+def instance_env(name='webots_drone:webots_drone/DroneEnvDiscrete-v0',
+                 env_args={}, seed=666):
+    env_params = {
+        'time_limit_seconds': env_args.get('time_limit', 60),
+        'max_no_action_seconds': env_args.get('time_no_action', 5),
+        'frame_skip': env_args.get('frame_skip', 6),
+        'goal_threshold': env_args.get('goal_threshold', 0.25),
+        'init_altitude': env_args.get('init_altitude', 0.3),
+        'altitude_limits': env_args.get('altitude_limits', [0.25, 2.]),
+        'target_pos': env_args.get('target_pos', None),
+        'target_dim': env_args.get('target_dim', [.05, .02]),
+        'is_pixels': env_args.get('is_pixels', False),
+        }
+
+    if isinstance(env_params['target_pos'], list):
+        if len(env_params['target_pos']) > 1:
+            print('WARNING: Multiple target positions were defined, taking the first one during training.')
+        env_params['target_pos'] = env_params['target_pos'][0]
     # Create the environment
     env = gym.make(name, **env_params)
     env.seed(seed)
 
-    if not isinstance(args, dict):
-        env_params['frame_stack'] = args.frame_stack
-        env_params['is_multimodal'] = args.is_pixels and args.is_vector
-        env_params['is_vector'] = args.is_vector
-        env_params['target_dist2obs'] = args.add_target_dist
-        env_params['target_pos2obs'] = args.add_target_pos
-        env_params['target_dim2obs'] = args.add_target_dim
-        env_params['action2obs'] = args.add_action
-        env_params['uav_data'] = args.uav_data
-
-    env_params['state_shape'] = env.observation_space.shape
+    env_args['state_shape'] = env.observation_space.shape
     if len(env.action_space.shape) == 0:
-        env_params['action_shape'] = (env.action_space.n, )
+        env_args['action_shape'] = (env.action_space.n, )
     else:
-        env_params['action_shape'] = env.action_space.shape
+        env_args['action_shape'] = env.action_space.shape
 
-    return env, env_params
+    return env
 
 
 def wrap_env(env, env_params):
@@ -264,7 +265,7 @@ def wrap_env(env, env_params):
 
         env_params['state_shape'] = env.observation_space.shape
 
-    return env, env_params
+    return env
 
 
 def args2ae_config(args, env_params):
@@ -340,6 +341,24 @@ def args2logpath(args, algo):
 
     return outfolder, exp_name, latest_run_id
 
+
+def args2target(env, arg_tpos):
+    target_pos = arg_tpos
+    if arg_tpos is None:
+        target_pos = list(range(len(env.quadrants)))
+    elif 'sample' in arg_tpos:
+        target_pos = np.random.choice(range(len(env.quadrants)),
+                                      int(target_pos.replace('sample-', '')),
+                                      replace=False)
+    elif arg_tpos == 'random':
+        target_pos = [env.vtarget.get_random_position(env.flight_area)]
+    elif 'random-' in arg_tpos:
+        n_points = int(target_pos.replace('random-', ''))
+        target_pos = [env.vtarget.get_random_position(env.flight_area)
+                      for _ in range(n_points)]
+    return target_pos
+
+
 def save_dict_json(dict2save, json_path):
     proc_dic = dict2save.copy()
     dict_json = json.dumps(proc_dic,
@@ -357,31 +376,124 @@ def load_json_dict(json_path):
     return json_dict
 
 
-class ArgsSaveCallback(BaseCallback):
+class DroneExperimentCallback(CheckpointCallback):
     """
     A callback to save the arguments after creating the log output folder.
 
-    :param args: The ArgumentParser object to be save.
-    :param out_path: The json file to be writen.
-    :param verbose: Verbosity level: 0 for no output, 1 for info messages, 2 for debug messages
+    :param exp_args: The Parser object to be save.
+    :param out_path: The json file path to be writen.
+    :param memory_steps: The number of steps to initialize the memory.
+    :param data_store: The StepDataStore object.
     """
 
-    def __init__(self, args, out_path, verbose: int = 0):
-        super().__init__(verbose)
-        self.args = vars(args)
+    def __init__(self, *args,
+                 exp_args: dict,
+                 out_path: str,
+                 memory_steps: int,
+                 data_store: StoreStepData,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        self.exp_args = vars(exp_args)
         self.out_path = out_path
+        self.data_store = data_store
+        # apply a offset to ensure saving agents after save_freq without memory fill
+        self.n_calls = -memory_steps
+        self.save_freq_tmp = self.save_freq
+        self.save_freq = float('inf')
 
     def _on_training_start(self) -> None:
-        save_dict_json(self.args, self.out_path)
-
-    def _on_rollout_start(self) -> None:
-        pass
+        save_dict_json(self.exp_args, self.out_path)
+        self.data_store.init_store()
 
     def _on_step(self) -> bool:
-        return True
+        if self.n_calls == 0:
+            self.data_store.set_learning()
+            self.save_freq = self.save_freq_tmp
+        if self.n_calls % self.save_freq == 0:
+            self.data_store.new_episode()
+            self.training_env.reset()
+        return super()._on_step()
 
-    def _on_rollout_end(self) -> None:
-        pass
 
-    def _on_training_end(self) -> None:
-        pass
+class DroneEnvMonitor(Monitor):
+    def __init__(self, *args,
+                 store_path: Union[Path, str],
+                 n_sensors: int = 0,
+                 extra_info: bool = True,
+                 epsilon_value: Optional[Callable] = None,
+                 other_cols: Optional[List[str]] = None,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        self._data_store = StoreStepData(
+            store_path, n_sensors, epsilon_value, extra_info, other_cols)
+
+    def reset(self, **kwargs) -> tuple[ObsType, dict[str, Any]]:
+        obs = super().reset(**kwargs)
+        self._data_store.set_init_state(None, obs[1])
+        return obs
+
+    def step(self, action: ActType) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        observation, reward, terminated, truncated, info = super().step(action)
+        sample = (None, action, reward, None, terminated, truncated)
+        self._data_store(sample, info)
+        return observation, reward, terminated, truncated, info
+
+    def set_episode(self, episode: int) -> None:
+        self._data_store.new_episode(episode)
+
+    def set_eval(self) -> None:
+        self._data_store.set_eval()
+
+    def set_learning(self) -> None:
+        self._data_store.set_learning()
+
+
+def evaluate_agent(agent_select_action: Callable,
+                   env: gym.Env,
+                   n_episodes: int,
+                   n_steps: int,
+                   target_quadrant: int):
+    steps = []
+    rewards = []
+    times = []
+
+    for i in range(n_episodes):
+        timemark = time.time()
+        state, info = env.reset(target_pos=target_quadrant)
+        ep_reward = 0
+        ep_steps = 0
+        end = False
+
+        while not end:
+            action = agent_select_action(state)
+            next_state, reward, done, truncated, info = env.step(action)
+            end = done or truncated
+            ep_steps += 1
+            ep_reward += reward
+            state = next_state
+            prefix = f"Run {i+1:02d}/{n_episodes:02d}"
+            sys.stdout.write(f"\r{prefix} | Reward: {ep_reward:.4f} | "
+                             f"Length: {ep_steps}  ")
+            if ep_steps == n_steps:
+                end = True
+
+        elapsed_time = time.time() - timemark
+
+        steps.append(ep_steps)
+        rewards.append(ep_reward)
+        times.append(elapsed_time)
+    
+    if isinstance(target_quadrant, int):
+        target_str = f"{target_quadrant:02d}"
+    elif isinstance(target_quadrant, np.ndarray):
+        target_str = str(target_quadrant)
+    ttime = np.sum(times).round(3)
+    tsteps = np.mean(steps)
+    treward = np.mean(rewards).round(4)
+    sys.stdout.write(f"\r- Evaluated in {ttime:.3f} seconds | "
+                     f"Target Position {target_str} | "
+                     f"Mean reward: {treward:.4f} | "
+                     f"Mean lenght: {tsteps}\n")
+    sys.stdout.flush()
+
+    return ep_reward, ep_steps, elapsed_time
