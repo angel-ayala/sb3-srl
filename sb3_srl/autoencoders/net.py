@@ -35,7 +35,8 @@ def weight_init(m):
         # delta-orthogonal init from https://arxiv.org/pdf/1806.05393.pdf
         assert m.weight.size(2) == m.weight.size(3)
         m.weight.data.fill_(0.0)
-        m.bias.data.fill_(0.0)
+        if m.bias is not None:
+            m.bias.data.fill_(0.0)
         mid = m.weight.size(2) // 2
         gain = nn.init.calculate_gain('relu')
         nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
@@ -100,8 +101,11 @@ class VectorEncoder(Conv1dMLP):
         self.fc = nn.Linear(latent_dim, latent_dim)
         self.ln = nn.LayerNorm(self.feature_dim)
 
+    def forward_linear(self, obs, detach=False):
+        return F.leaky_relu(super().forward(obs))
+
     def forward(self, obs, detach=False):
-        z = F.leaky_relu(super().forward(obs))
+        z = self.forward_linear(obs)
         if detach:
             z = z.detach()
         out = self.ln(self.fc(z))
@@ -287,29 +291,35 @@ class PixelDecoder(nn.Module):
 
 
 class MultimodalEncoder(nn.Module):
-    def __init__(self, vector_encoder, pixel_encoder):
+    def __init__(self, vector_encoder: nn.Module,
+                 pixel_encoder: nn.Module,
+                 hidden_dim: int = 256):
         super(MultimodalEncoder, self).__init__()
         latent_dim = vector_encoder.feature_dim
         self.vector = vector_encoder
-        pixel_encoder.fusion_conv = nn.Conv1d(2, 1, 1)
-        pixel_encoder.projection = ProjectionN(latent_dim, latent_dim)
         self.pixel = pixel_encoder
+        self.pixel.head = nn.Sequential(
+            nn.Linear(latent_dim * 2, hidden_dim),
+            nn.Dropout(.25),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, latent_dim),
+            nn.LayerNorm(latent_dim))
 
     def forward_z(self, obs, detach=False):
-        z_1 = self.vector(obs['vector'])
-        z_2 = self.pixel(obs['pixel'])
+        z_1 = self.vector.forward_linear(obs['vector'])
+        z_2 = self.pixel.forward_conv(obs['pixel'])
+        if detach:
+            z_1 = z_1.detach()
+            z_2 = z_2.detach()
         return z_1, z_2
 
     def forward_z_prj(self, obs, detach=False):
-        z_1, z_2 = self.forward_z(obs)
-        z_2 = self.pixel.projection(z_2)
+        z_1, z_2 = self.forward_z(obs, detach)
+        z_1 = self.vector.fc(z_1)
+        z_2 = self.pixel.fc(z_2.view(z_2.size(0), -1))
         return z_1, z_2
 
     def forward(self, obs, detach=False):
-        z_1, z_2 = self.forward_z_prj(obs)
-        # z_2 = F.leaky_relu(z_2)
-        z_cat = th.cat((z_1.unsqueeze(1), z_2.unsqueeze(1)), dim=1)
-        z = self.pixel.fusion_conv(z_cat).squeeze(1)
-        if detach:
-            z = z.detach()
-        return th.tanh(z)
+        z_1, z_2 = self.forward_z_prj(obs, detach)
+        z_h = self.pixel.head(th.cat((z_1, z_2), dim=1))
+        return th.tanh(z_h)
