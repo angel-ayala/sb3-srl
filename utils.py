@@ -21,6 +21,7 @@ from stable_baselines3.common.utils import get_latest_run_id
 from webots_drone.data import StoreStepData
 from webots_drone.envs.preprocessor import MultiModalObservation
 from webots_drone.envs.preprocessor import CustomVectorObservation
+from webots_drone.envs.preprocessor import UAV_DATA
 from webots_drone.stack import ObservationStack
 
 
@@ -39,10 +40,10 @@ def list_of_targets(arg):
 
 
 def uav_data_list(arg):
-    avlbl_data = ['imu', 'gyro', 'gps', 'gps_vel', 'north', 'dist_sensors']
+    global UAV_DATA
     sel_data = list()
     for d in arg.lower().split(','):
-        if d in avlbl_data:
+        if d in UAV_DATA:
             sel_data.append(d)
     return sel_data
 
@@ -101,6 +102,7 @@ def parse_memory_args(parser):
     arg_mem.add_argument("--beta-steps", type=float, default=112500,
                            help='Beta bias steps to reach 1.')
     return arg_mem
+
 
 def parse_srl_args(parser):
     arg_srl = parser.add_argument_group(
@@ -196,8 +198,8 @@ def args2env_params(args):
         'target_dist2obs': _args.get('add_target_dist', False),
         'target_dim2obs': _args.get('add_target_dim', False),
         'action2obs': _args.get('add_action', False),
-        'uav_data': _args.get('uav_data',
-                              ['imu', 'gyro', 'gps', 'gps_vel', 'north', 'dist_sensors']),
+        'uav_data': _args.get('uav_data', UAV_DATA),
+        'norm_obs': True
         }
     env_params['is_multimodal'] = env_params['is_pixels'] and env_params['is_vector']
     return env_params
@@ -236,9 +238,9 @@ def instance_env(name='webots_drone:webots_drone/DroneEnvDiscrete-v0',
 
 def wrap_env(env, env_params):
     env_range = {
-        'angles_range': [np.pi/6, np.pi/6, np.pi],
-        'avel_range': [np.pi/3, np.pi/3, 2*np.pi],
-        'speed_range': [0.8, 0.8, 0.6]
+        'angles_range': [np.pi/2, np.pi/2, np.pi],
+        'avel_range': [np.pi, np.pi, 2*np.pi],
+        'speed_range': [0.5, 0.5, 0.5]
         }
     if env_params['is_multimodal']:
         env = MultiModalObservation(env, uav_data=env_params['uav_data'],
@@ -247,6 +249,7 @@ def wrap_env(env, env_params):
                                     target_dim=env_params['target_dim2obs'],
                                     target_dist=env_params['target_dist2obs'],
                                     add_action=env_params['action2obs'],
+                                    norm_obs=env_params['norm_obs'],
                                     **env_range)
         env_params['state_shape'] = (env.observation_space['vector'].shape,
                                      env.observation_space['pixel'].shape)
@@ -258,6 +261,7 @@ def wrap_env(env, env_params):
                                           target_pos=env_params['target_pos2obs'],
                                           target_dim=env_params['target_dim2obs'],
                                           add_action=env_params['action2obs'],
+                                          norm_obs=env_params['norm_obs'],
                                           **env_range)
 
         if env_params['frame_stack'] > 1:
@@ -447,6 +451,9 @@ class DroneEnvMonitor(Monitor):
     def set_learning(self) -> None:
         self._data_store.set_learning()
 
+    def init_store(self) -> None:
+        self._data_store.init_store()
+
 
 def evaluate_agent(agent_select_action: Callable,
                    env: gym.Env,
@@ -482,7 +489,7 @@ def evaluate_agent(agent_select_action: Callable,
         steps.append(ep_steps)
         rewards.append(ep_reward)
         times.append(elapsed_time)
-    
+
     if isinstance(target_quadrant, int):
         target_str = f"{target_quadrant:02d}"
     elif isinstance(target_quadrant, np.ndarray):
