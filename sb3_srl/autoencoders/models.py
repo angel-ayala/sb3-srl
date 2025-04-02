@@ -17,10 +17,10 @@ from stable_baselines3.common.logger import Image as ImageLogger
 from sb3_srl.introspection import IntrospectionBelief
 from sb3_srl.utils import EarlyStopper
 
-from .net import MultimodalEncoder
 from .net import PixelDecoder
 from .net import PixelEncoder
 from .net import ProjectionN
+from .net import SimpleMuMoEncoder
 from .net import SimpleSPRDecoder
 from .net import SPRDecoder
 from .net import VectorDecoder
@@ -99,7 +99,7 @@ class RepresentationModel:
             pixel_args = enc_args.copy()
             del pixel_args['layers_dim']
             pixel_args['state_shape'] = enc_args['state_shape'][1]
-            self.encoder = MultimodalEncoder(VectorEncoder(**vector_args),
+            self.encoder = SimpleMuMoEncoder(VectorEncoder(**vector_args),
                                              PixelEncoder(**pixel_args))
         elif self.is_pixel:
             del enc_args['layers_dim']
@@ -353,6 +353,8 @@ class SelfPredictiveModel(RepresentationModel):
         del dec_args['layers_filter']
         if self.is_pixel:
             dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
+        if self.is_multimodal:
+            dec_args['latent_dim'] *= 2
         self.decoder = SPRDecoder(**dec_args)
 
     def set_stopper(self, patience, threshold=0.):
@@ -427,6 +429,8 @@ class InfoSPRModel(RepresentationModel):
         del dec_args['layers_filter']
         if self.is_pixel:
             dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
+        if self.is_multimodal:
+            dec_args['latent_dim'] *= 2
         self.decoder = SimpleSPRDecoder(**dec_args)
 
     def compute_representation_loss(self, observations, actions, next_observations):
@@ -437,11 +441,7 @@ class InfoSPRModel(RepresentationModel):
         # compare next_latent with transition
         contrastive = info_nce_loss(obs_z1, obs_z1_hat)
         # L2 over Z
-        if self.is_multimodal:
-            z1, z2 = self.encoder.forward_z(observations)
-            latent_loss = 0.5 * (latent_l2_loss(z1) + latent_l2_loss(z2))
-        else:
-            latent_loss = latent_l2_loss(obs_z1)
+        latent_loss = latent_l2_loss(obs_z1)
         self.log("l2_loss", latent_loss.item())
         self.update_stopper(latent_loss)
         loss = contrastive + latent_loss * self.decoder_lambda

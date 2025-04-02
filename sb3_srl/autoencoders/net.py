@@ -290,12 +290,31 @@ class PixelDecoder(nn.Module):
         return obs
 
 
-class MultimodalEncoder(nn.Module):
+class SimpleMuMoEncoder(nn.Module):
     def __init__(self, vector_encoder: nn.Module,
                  pixel_encoder: nn.Module,
                  hidden_dim: int = 256):
-        super(MultimodalEncoder, self).__init__()
+        super(SimpleMuMoEncoder, self).__init__()
+        self.feature_dim = vector_encoder.feature_dim + pixel_encoder.feature_dim
+        self.vector = vector_encoder
+        self.pixel = pixel_encoder
+
+    def forward(self, obs, detach=False):
+        z_1 = self.vector(obs['vector'])
+        z_2 = self.pixel(obs['pixel'])
+        if detach:
+            z_1 = z_1.detach()
+            z_2 = z_2.detach()
+        return th.cat((z_1, z_2), dim=1)
+
+
+class MixMuMoEncoder(nn.Module):
+    def __init__(self, vector_encoder: nn.Module,
+                 pixel_encoder: nn.Module,
+                 hidden_dim: int = 256):
+        super(MixMuMoEncoder, self).__init__()
         latent_dim = vector_encoder.feature_dim
+        self.feature_dim = latent_dim
         self.vector = vector_encoder
         self.pixel = pixel_encoder
         self.pixel.head = nn.Sequential(
