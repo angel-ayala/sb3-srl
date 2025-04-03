@@ -305,7 +305,7 @@ class SimpleMuMoEncoder(nn.Module):
         if detach:
             z_1 = z_1.detach()
             z_2 = z_2.detach()
-        return th.cat((z_1, z_2), dim=1)
+        return {'vector': z_1, 'pixel': z_2}
 
 
 class MixMuMoEncoder(nn.Module):
@@ -341,4 +341,17 @@ class MixMuMoEncoder(nn.Module):
     def forward(self, obs, detach=False):
         z_1, z_2 = self.forward_z_prj(obs, detach)
         z_h = self.pixel.head(th.cat((z_1, z_2), dim=1))
-        return th.tanh(z_h)
+        return {'vector': th.tanh(z_h)}
+
+
+class MuMoSPRDecoder(nn.Module):
+    def __init__(self, action_shape: tuple,
+                 latent_dim: int,
+                 layers_dim: List[int] = [256]):
+        super(MuMoSPRDecoder, self).__init__()
+        self.pixel = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
+        self.vector = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
+
+    def forward(self, obs, action):
+        return {'vector': self.vector(obs['vector'], action),
+                'pixel': self.pixel(obs['pixel'], action)}

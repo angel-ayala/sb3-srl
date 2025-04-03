@@ -17,6 +17,7 @@ from stable_baselines3.common.logger import Image as ImageLogger
 from sb3_srl.introspection import IntrospectionBelief
 from sb3_srl.utils import EarlyStopper
 
+from .net import MuMoSPRDecoder
 from .net import PixelDecoder
 from .net import PixelEncoder
 from .net import ProjectionN
@@ -182,13 +183,9 @@ class RepresentationModel:
             self.decoder_optim.step()
 
     def forward_z(self, observation, detach=False):
-        if self.is_multimodal:
-            return {'pixel': self.encoder(observation, detach=detach)}
         return self.encoder(observation, detach=detach)
 
     def target_forward_z(self, observation, detach=False):
-        if self.is_multimodal:
-            return {'pixel': self.encoder_target(observation, detach=detach)}
         return self.encoder_target(observation, detach=detach)
 
     def decode_latent(self, observation_z):
@@ -354,7 +351,7 @@ class SelfPredictiveModel(RepresentationModel):
         if self.is_pixel:
             dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
         if self.is_multimodal:
-            dec_args['latent_dim'] *= 2
+            dec_args['latent_dim'] = self.encoder.feature_dim
         self.decoder = SPRDecoder(**dec_args)
 
     def set_stopper(self, patience, threshold=0.):
@@ -430,18 +427,29 @@ class InfoSPRModel(RepresentationModel):
         if self.is_pixel:
             dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
         if self.is_multimodal:
-            dec_args['latent_dim'] *= 2
-        self.decoder = SimpleSPRDecoder(**dec_args)
+            self.decoder = MuMoSPRDecoder(**dec_args)
+        else:
+            self.decoder = SimpleSPRDecoder(**dec_args)
 
     def compute_representation_loss(self, observations, actions, next_observations):
         # Encode observations
         obs_z = self.encoder(observations)
         obs_z1_hat = self.decoder(obs_z, actions)
         obs_z1 = self.encoder_target(next_observations)
-        # compare next_latent with transition
-        contrastive = info_nce_loss(obs_z1, obs_z1_hat)
-        # L2 over Z
-        latent_loss = latent_l2_loss(obs_z1)
+        if not self.is_multimodal:
+            # compare next_latent with transition
+            contrastive = info_nce_loss(obs_z1, obs_z1_hat)
+            # L2 over Z
+            latent_loss = latent_l2_loss(obs_z1)
+        else:
+            # compare next_latent with transition
+            contrast_vector = info_nce_loss(obs_z1['vector'], obs_z1_hat['vector'])
+            contrast_pixel = info_nce_loss(obs_z1['pixel'], obs_z1_hat['pixel'])
+            contrastive = (contrast_vector + contrast_pixel) * 0.5
+            # L2 over Z
+            l2_vector = latent_l2_loss(obs_z1['vector'])
+            l2_pixel = latent_l2_loss(obs_z1['pixel'])
+            latent_loss = (l2_vector + l2_pixel) * 0.5
         self.log("l2_loss", latent_loss.item())
         self.update_stopper(latent_loss)
         loss = contrastive + latent_loss * self.decoder_lambda

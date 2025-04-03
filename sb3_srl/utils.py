@@ -55,5 +55,5 @@ class DictFlattenExtractor(BaseFeaturesExtractor):
             obs_stack = []
             for k, obs in observations.items():
                 obs_stack.append(obs)
-            observations = th.cat(obs_stack)
+            observations = th.cat(obs_stack, dim=1)
         return self.flatten(observations)
