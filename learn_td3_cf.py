@@ -9,8 +9,8 @@ import argparse
 import numpy as np
 
 from stable_baselines3 import TD3
-from stable_baselines3.td3.policies import TD3Policy
 from stable_baselines3.common.noise import NormalActionNoise
+from stable_baselines3.td3.policies import TD3Policy, CnnPolicy, MultiInputPolicy
 
 from sb3_srl.td3_srl import SRLTD3Policy, SRLTD3
 
@@ -89,6 +89,10 @@ if __name__ == '__main__':
     else:
         algo, policy = TD3, TD3Policy
         policy_args = None
+        if args.is_pixels:
+            policy = CnnPolicy
+            if args.is_vector:
+                policy = MultiInputPolicy
 
     # Output log path
     log_path, exp_name, run_id = args2logpath(args, 'td3')

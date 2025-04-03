@@ -8,8 +8,7 @@ Created on Thu Feb  6 12:45:59 2025
 import argparse
 
 from stable_baselines3 import SAC
-from stable_baselines3.sac.policies import SACPolicy
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.sac.policies import SACPolicy, CnnPolicy, MultiInputPolicy
 
 from sb3_srl.sac_srl import SRLSACPolicy, SRLSAC
 
@@ -81,6 +80,10 @@ if __name__ == '__main__':
     else:
         algo, policy = SAC, SACPolicy
         policy_args = None
+        if args.is_pixels:
+            policy = CnnPolicy
+            if args.is_vector:
+                policy = MultiInputPolicy
 
     # Output log path
     log_path, exp_name, run_id = args2logpath(args, 'sac')
