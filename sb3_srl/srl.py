@@ -25,7 +25,7 @@ class SRLPolicy:
     @staticmethod
     def get_features_dim(ae_config):
         ae_type, ae_params = ae_config
-        return ae_params['latent_dim'] + ae_params['latent_dim'] * ae_params['is_multimodal']
+        return ae_params['latent_dim'] #+ ae_params['latent_dim'] * ae_params['is_multimodal']
 
     def make_autencoder(self, ae_config):
         ae_type, ae_params = ae_config

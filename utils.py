@@ -82,8 +82,7 @@ def parse_crazyflie_env_args(parser):
                          help='Whether if add the target dimension to vector state.')
     arg_env.add_argument("--add-action", action='store_true',
                          help='Whether if add the previous action to vector state.')
-    arg_env.add_argument("--uav-data", type=uav_data_list,
-                         default=['imu', 'gyro', 'gps', 'gps_vel', 'north', 'dist_sensors'],
+    arg_env.add_argument("--uav-data", type=uav_data_list, default=UAV_DATA,
                          help='Select the UAV sensor data as state, available'
                          ' options are: imu, gyro, gps, gps_vel, north, dist_sensors')
     return arg_env
@@ -483,7 +482,7 @@ def evaluate_agent(agent_select_action: Callable,
             state = next_state
             prefix = f"Run {i+1:02d}/{n_episodes:02d}"
             sys.stdout.write(f"\r{prefix} | Reward: {ep_reward:.4f} | "
-                             f"Lenght: {ep_steps}  ")
+                             f"Length: {ep_steps}  ")
             if ep_steps == n_steps or truncated:
                 end = True
 

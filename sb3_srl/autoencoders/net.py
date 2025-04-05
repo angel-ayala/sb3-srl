@@ -296,7 +296,8 @@ class SimpleMuMoEncoder(nn.Module):
                  pixel_encoder: nn.Module,
                  hidden_dim: int = 256):
         super(SimpleMuMoEncoder, self).__init__()
-        self.feature_dim = vector_encoder.feature_dim + pixel_encoder.feature_dim
+        # self.feature_dim = vector_encoder.feature_dim + pixel_encoder.feature_dim
+        self.feature_dim = pixel_encoder.feature_dim
         self.vector = vector_encoder
         self.pixel = pixel_encoder
 
@@ -377,11 +378,11 @@ class MuMoSPRDecoder(nn.Module):
         super(MuMoSPRDecoder, self).__init__()
         self.pixel = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
         self.vector = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
-        self.vector.action_infer = nn.Sequential(
-                nn.Linear(latent_dim, layers_dim[-1]),
-                nn.LeakyReLU(),
-                nn.Linear(layers_dim[-1], int(np.prod(action_shape) * 2 + 1)),
-                nn.Sigmoid())
+        # self.vector.action_infer = nn.Sequential(
+        #         nn.Linear(latent_dim, layers_dim[-1]),
+        #         nn.LeakyReLU(),
+        #         nn.Linear(layers_dim[-1], int(np.prod(action_shape) * 2 + 1)),
+        #         nn.Sigmoid())
         self.vector.query = nn.Linear(latent_dim, latent_dim)
         # self.vector.query = nn.Sequential(
         #         nn.Linear(latent_dim, layers_dim[-1]),

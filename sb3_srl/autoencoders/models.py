@@ -570,7 +570,15 @@ class MuMoAESPRModel(RepresentationModel):
         dec_args['layers_dim'] = [dec_args['layers_dim'][-1]
                                   ] * (len(dec_args['layers_dim']) - 1)
         self.decoder = MuMoSPRDecoder(**dec_args)
-        
+        # print(self.decoder)
+
+    def forward_z(self, observation, detach=False):
+        obs_z = super().forward_z(observation, detach=detach)
+        return {'pixel': self.decoder.forward_attn(obs_z)}
+
+    def target_forward_z(self, observation, detach=False):
+        obs_z = super().target_forward_z(observation, detach=detach)
+        return {'pixel': self.decoder.forward_attn(obs_z)}
 
     def compute_representation_loss(self, observations, actions, next_observations):
         # Encode observations
