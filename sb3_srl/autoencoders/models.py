@@ -19,6 +19,7 @@ from sb3_srl.utils import EarlyStopper
 
 from .net import MuMoSPRDecoder
 from .net import PixelDecoder
+from .net import Pixel2Pose
 from .net import PixelEncoder
 from .net import ProjectionN
 from .net import SimpleMuMoEncoder
@@ -527,3 +528,86 @@ class IntrospectiveInfoSPR(InfoSPRModel, IntrospectionBelief):
         self.log("probability_success", success_prob.item())
         self.log("probability_loss", success_loss.item())
         return p_loss
+
+
+class MuMoAESPRModel(RepresentationModel):
+    def __init__(self, *args, **kwargs):
+        super(MuMoAESPRModel, self).__init__('MuMoAESPR', *args, **kwargs)
+
+    def _setup_encoder(self):
+        assert self.is_multimodal, "MuMoAESPRModel is a Multimodal only model"
+        enc_args = self.args.copy()
+        del enc_args['action_shape']
+        vector_args = enc_args.copy()
+        del vector_args['layers_filter']
+        vector_args['state_shape'] = enc_args['state_shape'][0]
+        vector_args['layers_dim'] = [enc_args['layers_dim'][-1]] * (len(enc_args['layers_dim']) - 1)
+        pixel_args = enc_args.copy()
+        del pixel_args['layers_dim']
+        pixel_args['state_shape'] = enc_args['state_shape'][1]
+        self.encoder = SimpleMuMoEncoder(VectorEncoder(**vector_args),
+                                         # PixelEncoder(**pixel_args))
+                                         Pixel2Pose(**pixel_args))
+        # self.encoder.pixel.pose_head = th.nn.Sequential(
+        #     th.nn.Linear(vector_args['latent_dim'], enc_args['layers_dim'][-1]),
+        #     th.nn.LeakyReLU(),
+        #     th.nn.Linear(enc_args['layers_dim'][-1], 6)
+        #     )
+
+    # def encoder_forward(self, obs, detach=False):
+    #     z_1 = self.encoder.vector(obs['vector'])
+    #     z_2 = self.encoder.pixel(obs['pixel'])
+    #     if detach:
+    #         z_1 = z_1.detach()
+    #         z_2 = z_2.detach()
+    #     return {'vector': z_1, 'pixel': z_2}
+
+    def _setup_decoder(self):
+        assert self.is_multimodal, "MuMoAESPRModel is a Multimodal only model"
+        dec_args = self.args.copy()
+        del dec_args['state_shape']
+        del dec_args['layers_filter']
+        dec_args['layers_dim'] = [dec_args['layers_dim'][-1]
+                                  ] * (len(dec_args['layers_dim']) - 1)
+        self.decoder = MuMoSPRDecoder(**dec_args)
+        
+
+    def compute_representation_loss(self, observations, actions, next_observations):
+        # Encode observations
+        obs_z = self.encoder(observations)
+        obs_z1_hat = self.decoder(obs_z, actions)
+        obs_z1 = self.encoder_target(next_observations)
+        # inverse model loss
+        # actions_stack = th.cat(
+        #     (actions[actions > 0], actions[actions < 0] * -1), dim=1)
+        # actions_stack = th.cat(
+        #     (actions_stack, (actions.sum(dim=1) == 0).unsqueeze(-1)), dim=1)
+        # actions_class = (actions_stack > 0.5).float()
+        # actions_infer = self.decoder.vector.action_infer(obs_z1_hat['vector'] - obs_z['vector'])
+        # inverse_loss = F.binary_cross_entropy(actions_infer, actions_class)
+        # inverse_loss = F.mse_loss(actions, actions_infer)
+        # TODO: pixel decoder loss instead spr for high dimension data?
+        # pixel2pose model
+        pose_hat, pose = self.encoder.pixel.forward_pose(observations)
+        pose_loss = F.mse_loss(pose_hat, pose)
+        # attention block for latent fusion + contrastive
+        z_attn = self.decoder.forward_attn(obs_z1)
+        z_attn_hat = self.decoder.forward_attn(obs_z1_hat)
+        contrastive = info_nce_loss(z_attn, z_attn_hat)
+        # contrast_vector = info_nce_loss(obs_z1['vector'], obs_z1_hat['vector'])
+        # contrast_pixel = info_nce_loss(obs_z1['pixel'], obs_z1_hat['pixel'])
+        # contrastive = (contrast_vector + contrast_pixel) * 0.5
+        # L2 over Z
+        # latent_loss = latent_l2_loss(z_attn)
+        # l2_vector = latent_l2_loss(obs_z1['vector'])
+        # l2_pixel = latent_l2_loss(obs_z1['pixel'])
+        # latent_loss = (l2_vector + l2_pixel) * 0.5
+        # self.log("inverse_loss", inverse_loss.item())
+        self.log("pose_loss", pose_loss.item())
+        # self.log("l2_loss", latent_loss.item())
+        # self.update_stopper(latent_loss)
+        # loss = contrastive + latent_loss * self.decoder_lambda + inverse_loss * 1e-3
+        # loss = contrastive + latent_loss * self.decoder_lambda + pose_loss * 1e-3
+        loss = contrastive + pose_loss  * self.decoder_lambda
+        self.log("rep_loss", loss.item())
+        return loss  # *2.

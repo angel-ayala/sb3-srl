@@ -25,8 +25,7 @@ from utils import (
     parse_crazyflie_env_args,
     parse_memory_args,
     parse_srl_args,
-    parse_utils_args,
-    wrap_env
+    parse_utils_args
 )
 
 
@@ -61,10 +60,11 @@ def iterate_agents_evaluation(env, algorithm, args):
     for log_ep, agent_path in enumerate(agent_models):
         if args.episode > -1 and log_ep != args.episode:
             continue
+        # custom agent episodes selection
+        elif args.episode == -1 and log_ep not in [5, 10, 20, 35, 50]:
+            continue
 
-        agent_path = agent_models[log_ep]
         print('Loading', agent_path)
-
         model = algorithm.load(agent_path)
         def action_selection(observations):
             actions, states = model.predict(
@@ -73,12 +73,13 @@ def iterate_agents_evaluation(env, algorithm, args):
                 episode_start=None,
                 deterministic=True,
             )
-            return actions
+            return actions[0]
 
         # Target position for evaluation
         targets_pos = args2target(env, args.target_pos)
         # Log eval data
-        csv_path = logs_path / 'eval' / f"history_{log_ep:03d}.csv"
+        ep_name = agent_path.stem.replace('rl_model_', '')
+        csv_path = logs_path / 'eval' / f"history_{ep_name}.csv"
         csv_path.parent.mkdir(exist_ok=True)
         monitor_env = DroneEnvMonitor(env, store_path=csv_path, n_sensors=4,
                                       reset_keywords=['target_pos'])
@@ -100,7 +101,6 @@ if __name__ == '__main__':
     # Environment
     environment_name = 'webots_drone:webots_drone/CrazyflieEnvContinuous-v0'
     env = instance_env(environment_name, env_params, seed=args.seed)
-    env = wrap_env(env, env_params)  # observation preprocesing
 
     # Algorithm
     if args.is_srl:

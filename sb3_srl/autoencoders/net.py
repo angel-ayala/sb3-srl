@@ -7,6 +7,7 @@ Created on Thu Feb  6 11:23:42 2025
 """
 from typing import List
 
+import numpy as np
 import torch as th
 from torch import nn
 import torch.nn.functional as F
@@ -344,6 +345,31 @@ class MixMuMoEncoder(nn.Module):
         return {'vector': th.tanh(z_h)}
 
 
+class Pixel2Pose(nn.Module):
+    def __init__(self, state_shape: tuple,
+                 latent_dim: int,
+                 layers_dim: List[int] = [256],
+                 layers_filter: List[int] = [32, 32]):
+        super(Pixel2Pose, self).__init__()
+        self.encoder = PixelEncoder(state_shape, latent_dim, layers_filter)
+        self.feature_dim = self.encoder.feature_dim
+        self.pose_decoder = nn.Sequential(
+            nn.Linear(latent_dim, layers_dim[-1]),
+            nn.LeakyReLU(),
+            nn.Linear(layers_dim[-1], 6))
+
+    def forward(self, observations):
+        return self.encoder(observations)
+
+    def forward_pose(self, observations):
+        pose = observations['vector']
+        pose = th.cat((pose[:, :3], pose[:, 6:9]), dim=1)
+        z = self.encoder.forward_conv(observations['pixel'])
+        z = self.encoder.fc(z.view(z.size(0), -1))
+        pose_hat = self.pose_decoder(z)
+        return pose_hat, pose
+
+
 class MuMoSPRDecoder(nn.Module):
     def __init__(self, action_shape: tuple,
                  latent_dim: int,
@@ -351,7 +377,34 @@ class MuMoSPRDecoder(nn.Module):
         super(MuMoSPRDecoder, self).__init__()
         self.pixel = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
         self.vector = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
+        self.vector.action_infer = nn.Sequential(
+                nn.Linear(latent_dim, layers_dim[-1]),
+                nn.LeakyReLU(),
+                nn.Linear(layers_dim[-1], int(np.prod(action_shape) * 2 + 1)),
+                nn.Sigmoid())
+        self.vector.query = nn.Linear(latent_dim, latent_dim)
+        # self.vector.query = nn.Sequential(
+        #         nn.Linear(latent_dim, layers_dim[-1]),
+        #         nn.LeakyReLU(),
+        #         nn.Linear(layers_dim[-1], int(np.prod(action_shape) * 2 + 1)),
+        #         nn.Sigmoid())
+        self.vector.key = nn.Linear(latent_dim, latent_dim)
+        # self.vector.key = nn.Sequential(
+        #         nn.Linear(latent_dim, layers_dim[-1]),
+        #         nn.LeakyReLU(),
+        #         nn.Linear(layers_dim[-1], int(np.prod(action_shape) * 2 + 1)),
+        #         nn.Sigmoid())
+        self.vector.value = nn.Linear(latent_dim, latent_dim)
 
     def forward(self, obs, action):
         return {'vector': self.vector(obs['vector'], action),
                 'pixel': self.pixel(obs['pixel'], action)}
+
+    def forward_attn(self, observations, alpha=0.75, beta=0.25):
+        # https://www.mdpi.com/2076-3417/10/17/5902
+        query = self.vector.query(observations['pixel'])
+        key = self.vector.key(observations['vector'])
+        value = self.vector.value(observations['pixel'])
+        qk = query.squeeze(0) @ key.T
+        out = alpha * qk @ value + beta * observations['pixel']
+        return out

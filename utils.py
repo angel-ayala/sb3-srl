@@ -147,6 +147,8 @@ def parse_srl_args(parser):
                          help='Introspection loss function \lambda value, >0 to use introspection.')
     arg_srl.add_argument("--joint-optimization", action='store_true',
                          help='Whether if jointly optimize representation with RL updates.')
+    arg_srl.add_argument("--model-ispr-mumo", action='store_true',
+                         help='Whether if use the InfoNCE SimpleSPR Multimodal version model.')
     # arg_srl.add_argument("--model-vector-difference", action='store_true',
     #                      help='Whether if use the VectorDifference reconstruction model.')
     return arg_srl
@@ -206,37 +208,34 @@ def args2env_params(args):
 
 
 def instance_env(name='webots_drone:webots_drone/DroneEnvDiscrete-v0',
-                 env_args={}, seed=666):
-    env_params = {
-        'time_limit_seconds': env_args.get('time_limit', 60),
-        'max_no_action_seconds': env_args.get('time_no_action', 5),
-        'frame_skip': env_args.get('frame_skip', 6),
-        'goal_threshold': env_args.get('goal_threshold', 0.25),
-        'init_altitude': env_args.get('init_altitude', 0.3),
-        'altitude_limits': env_args.get('altitude_limits', [0.25, 2.]),
-        'target_pos': env_args.get('target_pos', None),
-        'target_dim': env_args.get('target_dim', [.05, .02]),
-        'is_pixels': env_args.get('is_pixels', False),
+                 env_params={}, seed=666):
+    _env_params = {
+        'time_limit_seconds': env_params.get('time_limit', 60),
+        'max_no_action_seconds': env_params.get('time_no_action', 5),
+        'frame_skip': env_params.get('frame_skip', 6),
+        'goal_threshold': env_params.get('goal_threshold', 0.25),
+        'init_altitude': env_params.get('init_altitude', 0.3),
+        'altitude_limits': env_params.get('altitude_limits', [0.25, 2.]),
+        'target_pos': env_params.get('target_pos', None),
+        'target_dim': env_params.get('target_dim', [.05, .02]),
+        'is_pixels': env_params.get('is_pixels', False),
         }
 
-    if isinstance(env_params['target_pos'], list):
-        if len(env_params['target_pos']) > 1:
+    if isinstance(_env_params['target_pos'], list):
+        if len(_env_params['target_pos']) > 1:
             print('WARNING: Multiple target positions were defined, taking the first one during training.')
-        env_params['target_pos'] = env_params['target_pos'][0]
+        _env_params['target_pos'] = env_params['target_pos'][0]
     # Create the environment
-    env = gym.make(name, **env_params)
+    env = gym.make(name, **_env_params)
     env.seed(seed)
 
-    env_args['state_shape'] = env.observation_space.shape
+    env_params['state_shape'] = env.observation_space.shape
     if len(env.action_space.shape) == 0:
-        env_args['action_shape'] = (env.action_space.n, )
+        env_params['action_shape'] = (env.action_space.n, )
     else:
-        env_args['action_shape'] = env.action_space.shape
+        env_params['action_shape'] = env.action_space.shape
 
-    return env
-
-
-def wrap_env(env, env_params):
+    # wrap observations
     env_range = {
         'angles_range': [np.pi/2, np.pi/2, np.pi],
         'avel_range': [np.pi, np.pi, 2*np.pi],
@@ -303,6 +302,8 @@ def args2ae_config(args, env_params):
         model_name = 'InfoSPR'
     elif args.model_i2spr:
         model_name = 'IntrospectiveInfoSPR'
+    elif args.model_ispr_mumo:
+        model_name = 'MuMoAESPR'
     else:
         raise ValueError('SRL model not recognized...')
 
@@ -332,6 +333,8 @@ def args2logpath(args, algo):
         path_suffix += '-ispr'
     if args.model_i2spr:
         path_suffix += '-i2spr'
+    if args.model_ispr_mumo:
+        path_suffix += '-ispr-custom'
     # extra labels
     if args.introspection_lambda != 0.:
         path_suffix += '-intr'
@@ -480,8 +483,8 @@ def evaluate_agent(agent_select_action: Callable,
             state = next_state
             prefix = f"Run {i+1:02d}/{n_episodes:02d}"
             sys.stdout.write(f"\r{prefix} | Reward: {ep_reward:.4f} | "
-                             f"Length: {ep_steps}  ")
-            if ep_steps == n_steps:
+                             f"Lenght: {ep_steps}  ")
+            if ep_steps == n_steps or truncated:
                 end = True
 
         elapsed_time = time.time() - timemark
@@ -494,6 +497,8 @@ def evaluate_agent(agent_select_action: Callable,
         target_str = f"{target_quadrant:02d}"
     elif isinstance(target_quadrant, np.ndarray):
         target_str = str(target_quadrant)
+    else:
+        target_str = 'Random'
     ttime = np.sum(times).round(3)
     tsteps = np.mean(steps)
     treward = np.mean(rewards).round(4)

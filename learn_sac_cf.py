@@ -23,8 +23,7 @@ from utils import (
     parse_memory_args,
     parse_srl_args,
     parse_training_args,
-    parse_utils_args,
-    wrap_env
+    parse_utils_args
 )
 
 
@@ -66,7 +65,6 @@ if __name__ == '__main__':
     # Environment
     environment_name = 'webots_drone:webots_drone/CrazyflieEnvContinuous-v0'
     env = instance_env(environment_name, env_params, seed=args.seed)
-    env = wrap_env(env, env_params)  # observation preprocesing
 
     if args.is_srl:
         algo, policy = SRLSAC, SRLSACPolicy
