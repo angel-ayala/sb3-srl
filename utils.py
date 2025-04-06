@@ -13,6 +13,7 @@ import sys
 import numpy as np
 import gymnasium as gym
 from pathlib import Path
+from natsort import natsorted
 
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
@@ -508,3 +509,43 @@ def evaluate_agent(agent_select_action: Callable,
     sys.stdout.flush()
 
     return ep_reward, ep_steps, elapsed_time
+
+
+def iterate_agents_evaluation(env, algorithm, args):
+    logs_path = Path(args.logspath)
+    agent_models = natsorted(logs_path.glob('agents/rl_model_*'), key=str)
+
+    for log_ep, agent_path in enumerate(agent_models):
+        if args.episode > -1 and log_ep != args.episode:
+            continue
+        # custom agent episodes selection
+        elif args.episode == -1 and log_ep not in [5, 10, 20, 35, 50]:
+            continue
+
+        print('Loading', agent_path)
+        model = algorithm.load(agent_path)
+        def action_selection(observations):
+            actions, states = model.predict(
+                observations,  # type: ignore[arg-type]
+                state=None,
+                episode_start=None,
+                deterministic=True,
+            )
+            return actions
+
+        # Target position for evaluation
+        targets_pos = args2target(env, args.target_pos)
+        # Log eval data
+        ep_name = agent_path.stem.replace('rl_model_', '')
+        csv_path = logs_path / 'eval' / f"history_{ep_name}.csv"
+        csv_path.parent.mkdir(exist_ok=True)
+        monitor_env = DroneEnvMonitor(env, store_path=csv_path, n_sensors=4,
+                                      reset_keywords=['target_pos'])
+        monitor_env.init_store()
+        monitor_env.set_eval()
+        # Iterate over goal position
+        for tpos in targets_pos:
+            monitor_env.set_episode(log_ep)
+            evaluate_agent(action_selection, monitor_env, args.eval_episodes,
+                           args.eval_steps, tpos)
+        monitor_env.close()

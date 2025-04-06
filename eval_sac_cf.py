@@ -7,10 +7,10 @@ Created on Thu Feb  6 12:45:59 2025
 """
 import argparse
 
-from stable_baselines3 import TD3
-from stable_baselines3.td3.policies import TD3Policy, CnnPolicy, MultiInputPolicy
+from stable_baselines3 import SAC
+from stable_baselines3.sac.policies import SACPolicy, CnnPolicy, MultiInputPolicy
 
-from sb3_srl.td3_srl import SRLTD3Policy, SRLTD3
+from sb3_srl.sac_srl import SRLSACPolicy, SRLSAC
 
 from utils import (
     args2ae_config,
@@ -21,7 +21,8 @@ from utils import (
     parse_crazyflie_env_args,
     parse_memory_args,
     parse_srl_args,
-    parse_utils_args
+    parse_utils_args,
+    wrap_env
 )
 
 
@@ -57,10 +58,11 @@ if __name__ == '__main__':
     # Environment
     environment_name = 'webots_drone:webots_drone/CrazyflieEnvContinuous-v0'
     env = instance_env(environment_name, env_params, seed=args.seed)
+    env = wrap_env(env, env_params)  # observation preprocesing
 
     # Algorithm
     if args.is_srl:
-        algo, policy = SRLTD3, SRLTD3Policy
+        algo, policy = SRLSAC, SRLSACPolicy
         # Autoencoder parameters
         ae_config = list(args2ae_config(args, env_params).items())
         if len(ae_config) == 0:
@@ -74,7 +76,7 @@ if __name__ == '__main__':
             'ae_params': ae_params,
             }
     else:
-        algo, policy = TD3, TD3Policy
+        algo, policy = SAC, SACPolicy
         policy_args = None
         if args.is_pixels:
             policy = CnnPolicy
