@@ -120,13 +120,13 @@ def parse_srl_args(parser):
     arg_srl.add_argument("--encoder-lr", type=float, default=1e-3,
                          help='Encoder function Adam learning rate.')
     arg_srl.add_argument("--encoder-tau", type=float, default=0.999,
-                         help='Encoder \tau polyak update.')
+                         help='Encoder \\tau polyak update.')
     arg_srl.add_argument("--encoder-steps", type=int, default=9000,
                          help='Steps of no improvement to stop Encoder gradient.')
     arg_srl.add_argument("--decoder-lr", type=float, default=1e-3,
                          help='Decoder function Adam learning rate.')
     arg_srl.add_argument("--decoder-latent-lambda", type=float, default=1e-6,
-                         help='Decoder regularization \lambda value.')
+                         help='Decoder regularization \\lambda value.')
     arg_srl.add_argument("--decoder-weight-decay", type=float, default=1e-7,
                          help='Decoder function Adam weight decay value.')
     arg_srl.add_argument("--representation-freq", type=int, default=1,

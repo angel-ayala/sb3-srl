@@ -22,6 +22,7 @@ from stable_baselines3.sac.policies import SACPolicy
 
 from sb3_srl.srl import SRLPolicy
 from sb3_srl.srl import SRLAlgorithm
+from sb3_srl.utils import DictFlattenExtractor
 
 
 class SRLSACPolicy(SACPolicy, SRLPolicy):
@@ -29,6 +30,7 @@ class SRLSACPolicy(SACPolicy, SRLPolicy):
                  ae_config: dict = {},
                  encoder_tau: float = 0.999, **kwargs):
         self.features_dim = SRLPolicy.get_features_dim(ae_config)
+        kwargs['features_extractor_class'] = DictFlattenExtractor
         SACPolicy.__init__(self, *args, **kwargs)
         SRLPolicy.__init__(self, ae_config, encoder_tau)
 
