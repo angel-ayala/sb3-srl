@@ -272,37 +272,38 @@ def instance_env(name='webots_drone:webots_drone/DroneEnvDiscrete-v0',
 
 
 def args2ae_config(args, env_params):
-    ae_models = {}
-    # image_shape = env_params['image_shape']
+    _args = args
+    if not isinstance(_args, dict):
+        _args = vars(_args)
     model_params = {
         'action_shape': env_params['action_shape'],
         'state_shape': env_params['state_shape'],
-        'latent_dim': args.latent_dim,
-        'layers_dim': [args.hidden_dim] * args.num_layers,
-        'layers_filter': [args.num_filters] * args.num_layers,
-        'encoder_lr': args.encoder_lr,
-        'decoder_lr': args.decoder_lr,
-        'encoder_only': args.encoder_only,
-        'encoder_steps': args.encoder_steps,
-        'decoder_lambda': args.decoder_latent_lambda,
-        'decoder_weight_decay': args.decoder_weight_decay,
-        'joint_optimization': args.joint_optimization,
-        'introspection_lambda': args.introspection_lambda,
-        'is_pixel': args.is_pixels,
-        'is_multimodal': args.is_pixels and args.is_vector,
+        'latent_dim': _args.get('latent_dim', 32),
+        'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
+        'layers_filter': [_args.get('num_filters', 32)] * _args.get('num_layers', 2),
+        'encoder_lr': _args.get('encoder_lr', 1e-3),
+        'decoder_lr': _args.get('decoder_lr', 1e-3),
+        'encoder_only': _args.get('encoder_only', False),
+        'encoder_steps': _args.get('encoder_steps', 9000),
+        'decoder_lambda': _args.get('decoder_lambda', 1e-6),
+        'decoder_weight_decay': _args.get('decoder_weight_decay', 1e-7),
+        'joint_optimization': _args.get('joint_optimization', False),
+        'introspection_lambda': _args.get('introspection_lambda', 0.),
+        'is_pixels': _args.get('is_pixels', False),
+        'is_multimodal': _args.get('is_pixels', False) and _args.get('is_vector', False),
         }
 
-    if args.model_reconstruction:
+    if _args.get('model_reconstruction', False):
         model_name = 'Reconstruction'
-    elif args.model_spr:
+    elif _args.get('model_spr', False):
         model_name = 'SelfPredictive'
-    elif args.model_reconstruction_dist:
+    elif _args.get('model_reconstruction_dist', False):
         model_name = 'ReconstructionDist'
-    elif args.model_ispr:
+    elif _args.get('model_ispr', False):
         model_name = 'InfoSPR'
-    elif args.model_i2spr:
+    elif _args.get('model_i2spr', False):
         model_name = 'IntrospectiveInfoSPR'
-    elif args.model_ispr_mumo:
+    elif _args.get('model_ispr_mumo', False):
         model_name = 'MuMoAESPR'
     else:
         raise ValueError('SRL model not recognized...')
@@ -538,12 +539,12 @@ def iterate_agents_evaluation(env, algorithm, args):
         model = algorithm.load(agent_path)
         def action_selection(observations):
             actions, states = model.predict(
-                observations,  # type: ignore[arg-type]
+                np.array(observations),  # type: ignore[arg-type]
                 state=None,
                 episode_start=None,
                 deterministic=True,
             )
-            return actions[0]
+            return actions
 
         # Target position for evaluation
         targets_pos = args2target(env, args.target_pos)
@@ -557,7 +558,7 @@ def iterate_agents_evaluation(env, algorithm, args):
         monitor_env.set_eval()
         # Iterate over goal position
         for tpos in targets_pos:
-            monitor_env.set_episode(log_ep)
+            monitor_env.new_episode(log_ep)
             evaluate_agent(action_selection, monitor_env, args.eval_episodes,
                            args.eval_steps, tpos)
         monitor_env.close()

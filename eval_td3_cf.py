@@ -50,36 +50,32 @@ def parse_args():
 
 
 if __name__ == '__main__':
-    args = parse_args()
-    env_params = load_json_dict(args.logspath + '/arguments.json')
-    env_params = args2env_params(env_params)
+    eval_args = parse_args()
+    saved_args = load_json_dict(eval_args.logspath + '/arguments.json')
+    env_params = args2env_params(saved_args)
 
     # Environment
     environment_name = 'webots_drone:webots_drone/CrazyflieEnvContinuous-v0'
-    env = instance_env(environment_name, env_params, seed=args.seed)
+    env = instance_env(environment_name, env_params, seed=eval_args.seed)
 
     # Algorithm
-    if args.is_srl:
+    if saved_args['is_srl']:
         algo, policy = SRLTD3, SRLTD3Policy
         # Autoencoder parameters
-        ae_config = list(args2ae_config(args, env_params).items())
-        if len(ae_config) == 0:
-            raise ValueError("No SRL model selected")
-        ae_type, ae_params = ae_config[0]
-
+        ae_config = args2ae_config(saved_args, env_params)
         # Policy args
         policy_args = {
             'net_arch': [256, 256],
-            'ae_type': ae_type,
-            'ae_params': ae_params,
+            'ae_config': ae_config,
+            'encoder_tau': saved_args['encoder_tau']
             }
     else:
         algo, policy = TD3, TD3Policy
         policy_args = None
-        if args.is_pixels:
+        if saved_args['is_pixels']:
             policy = CnnPolicy
-            if args.is_vector:
+            if saved_args['is_vector']:
                 policy = MultiInputPolicy
 
     # Evaluation loop
-    iterate_agents_evaluation(env, algo, args)
+    iterate_agents_evaluation(env, algo, eval_args)
