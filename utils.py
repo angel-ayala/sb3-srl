@@ -120,13 +120,13 @@ def parse_srl_args(parser):
     arg_srl.add_argument("--encoder-lr", type=float, default=1e-3,
                          help='Encoder function Adam learning rate.')
     arg_srl.add_argument("--encoder-tau", type=float, default=0.999,
-                         help='Encoder \\tau polyak update.')
+                         help='Encoder tau polyak update.')
     arg_srl.add_argument("--encoder-steps", type=int, default=9000,
                          help='Steps of no improvement to stop Encoder gradient.')
     arg_srl.add_argument("--decoder-lr", type=float, default=1e-3,
                          help='Decoder function Adam learning rate.')
     arg_srl.add_argument("--decoder-latent-lambda", type=float, default=1e-6,
-                         help='Decoder regularization \\lambda value.')
+                         help='Decoder regularization lambda value.')
     arg_srl.add_argument("--decoder-weight-decay", type=float, default=1e-7,
                          help='Decoder function Adam weight decay value.')
     arg_srl.add_argument("--representation-freq", type=int, default=1,
@@ -448,9 +448,9 @@ class DroneEnvMonitor(Monitor):
 
     def export_env_data(self, outpath: Optional[Union[str, Path]] = None) -> None:
         env_data = {}
-        env_data['target_pos'] = str(self.env.vtarget.position)
-        env_data['target_quadrants'] = str(self.env.quadrants.tolist())
-        env_data['flight_area'] = str(self.env.flight_area.tolist())
+        env_data['target_pos'] = str(self.env.unwrapped.vtarget.position)
+        env_data['target_quadrants'] = str(self.env.unwrapped.quadrants.tolist())
+        env_data['flight_area'] = str(self.env.unwrapped.flight_area.tolist())
         if outpath is None:
             json_path = self._data_store.store_path.parent / 'environment.json'
         else:
@@ -538,13 +538,16 @@ def iterate_agents_evaluation(env, algorithm, args):
         print('Loading', agent_path)
         model = algorithm.load(agent_path)
         def action_selection(observations):
+            observations = np.array(observations, dtype=np.float32)
+            if observations.shape[0] != 1.:
+                observations = observations[np.newaxis, ...]
             actions, states = model.predict(
-                np.array(observations),  # type: ignore[arg-type]
+                observations,  # type: ignore[arg-type]
                 state=None,
                 episode_start=None,
                 deterministic=True,
             )
-            return actions
+            return actions[0]
 
         # Target position for evaluation
         targets_pos = args2target(env, args.target_pos)
