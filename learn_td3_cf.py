@@ -102,6 +102,7 @@ if __name__ == '__main__':
     # Save a checkpoint every N steps
     agents_path = f"{outpath}/agents"
     experiment_callback = DroneExperimentCallback(
+      env=env,
       save_freq=args.eval_interval,
       save_path=agents_path,
       name_prefix="rl_model",
@@ -109,8 +110,7 @@ if __name__ == '__main__':
       save_vecnormalize=False,
       exp_args=args,
       out_path=f"{outpath}/arguments.json",
-      memory_steps=args.memory_steps,
-      data_store=env._data_store
+      memory_steps=args.memory_steps
     )
 
     # Create action noise because TD3 and DDPG use a deterministic policy

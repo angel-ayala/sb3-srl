@@ -394,15 +394,15 @@ class DroneExperimentCallback(CheckpointCallback):
     """
 
     def __init__(self, *args,
+                 env: gym.Env,
                  exp_args: dict,
                  out_path: str,
                  memory_steps: int,
-                 data_store: StoreStepData,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.exp_args = vars(exp_args)
         self.out_path = out_path
-        self.data_store = data_store
+        self.env = env
         # apply a offset to ensure saving agents after save_freq without memory fill
         self.n_calls = -memory_steps
         self.save_freq_tmp = self.save_freq
@@ -410,14 +410,14 @@ class DroneExperimentCallback(CheckpointCallback):
 
     def _on_training_start(self) -> None:
         save_dict_json(self.exp_args, self.out_path)
-        self.data_store.init_store()
+        self.env.init_store()
 
     def _on_step(self) -> bool:
         if self.n_calls == 0:
-            self.data_store.set_learning()
+            self.env.set_learning()
             self.save_freq = self.save_freq_tmp
         if self.n_calls % self.save_freq == 0:
-            self.data_store.new_episode()
+            self.env.new_episode()
             self.training_env.reset()
         return super()._on_step()
 
@@ -445,7 +445,18 @@ class DroneEnvMonitor(Monitor):
         self._data_store(sample, info)
         return observation, reward, terminated, truncated, info
 
-    def set_episode(self, episode: int) -> None:
+    def export_env_data(self, outpath: Optional[Union[str, Path]] = None) -> None:
+        env_data = {}
+        env_data['target_pos'] = str(self.env.vtarget.position)
+        env_data['target_quadrants'] = str(self.env.quadrants.tolist())
+        env_data['flight_area'] = str(self.env.flight_area.tolist())
+        if outpath is None:
+            json_path = self._data_store.store_path.parent / 'environment.json'
+        else:
+            json_path = outpath
+        save_dict_json(env_data, json_path)
+
+    def new_episode(self, episode: int = -1) -> None:
         self._data_store.new_episode(episode)
 
     def set_eval(self) -> None:
@@ -456,6 +467,7 @@ class DroneEnvMonitor(Monitor):
 
     def init_store(self) -> None:
         self._data_store.init_store()
+        self.export_env_data()
 
 
 def evaluate_agent(agent_select_action: Callable,
@@ -531,7 +543,7 @@ def iterate_agents_evaluation(env, algorithm, args):
                 episode_start=None,
                 deterministic=True,
             )
-            return actions
+            return actions[0]
 
         # Target position for evaluation
         targets_pos = args2target(env, args.target_pos)

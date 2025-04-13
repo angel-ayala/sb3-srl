@@ -432,6 +432,10 @@ class InfoSPRModel(RepresentationModel):
         else:
             self.decoder = SimpleSPRDecoder(**dec_args)
 
+    def set_stopper(self, patience, threshold=0.):
+        # not required
+        pass
+
     def compute_representation_loss(self, observations, actions, next_observations):
         # Encode observations
         obs_z = self.encoder(observations)
