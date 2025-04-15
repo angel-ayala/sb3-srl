@@ -22,6 +22,7 @@ from .net import PixelDecoder
 from .net import Pixel2Pose
 from .net import PixelEncoder
 from .net import ProjectionN
+from .net import ProprioceptiveEncoder
 from .net import SimpleMuMoEncoder
 from .net import SimpleSPRDecoder
 from .net import SPRDecoder
@@ -49,7 +50,7 @@ class RepresentationModel:
                  decoder_lambda: float = 1e-6,
                  joint_optimization: bool = False,
                  introspection_lambda: float = 0,
-                 is_pixel: bool = False,
+                 is_pixels: bool = False,
                  is_multimodal: bool = False):
         self.encoder = None
         self.decoder = None
@@ -62,7 +63,7 @@ class RepresentationModel:
                      'latent_dim': latent_dim,
                      'layers_dim': layers_dim,
                      'layers_filter': layers_filter}
-        self.is_pixel = is_pixel
+        self.is_pixels = is_pixels
         self.is_multimodal = is_multimodal
         self.joint_optimization = joint_optimization
         self.decoder_lambda = decoder_lambda
@@ -103,7 +104,7 @@ class RepresentationModel:
             pixel_args['state_shape'] = enc_args['state_shape'][1]
             self.encoder = SimpleMuMoEncoder(VectorEncoder(**vector_args),
                                              PixelEncoder(**pixel_args))
-        elif self.is_pixel:
+        elif self.is_pixels:
             del enc_args['layers_dim']
             self.encoder = PixelEncoder(**enc_args)
         else:
@@ -273,7 +274,7 @@ class RepresentationModel:
         return loss * 1e-5
 
     def __repr__(self):
-        if self.is_pixel:
+        if self.is_pixels:
             out_str = "Pixel"
         else:
             out_str = "Vector"
@@ -289,14 +290,14 @@ class RepresentationModel:
 class ReconstructionModel(RepresentationModel):
     def __init__(self, *args, **kwargs):
         super(ReconstructionModel, self).__init__('Reconstruction', *args, **kwargs)
-        if not self.is_pixel:
+        if not self.is_pixels:
             self.set_scaler((-1, 1))
         self._n_calls = 0
 
     def _setup_decoder(self):
         dec_args = self.args.copy()
         del dec_args['action_shape']
-        if self.is_pixel:
+        if self.is_pixels:
             del dec_args['layers_dim']
             self.decoder = PixelDecoder(**dec_args)
         else:
@@ -305,7 +306,7 @@ class ReconstructionModel(RepresentationModel):
 
     def preprocess_reconstruction(self, observations):
         # reconstruct normalized observation
-        if self.is_pixel:
+        if self.is_pixels:
             obs = preprocess_pixel_obs(observations.float(), bits=5)
         else:
             obs = th.FloatTensor(self.preprocess(observations.cpu()))
@@ -325,7 +326,7 @@ class ReconstructionModel(RepresentationModel):
         self.log("l2_loss", latent_loss.item())
         self.log("rep_loss", loss.item())
         self._n_calls += 1
-        if self._n_calls % self.LOG_FREQ == 0 and self.is_pixel:
+        if self._n_calls % self.LOG_FREQ == 0 and self.is_pixels:
             obs_log = rec_obs[-3:]
             if obs_log.shape[1] > 3:
                 n_stack = obs_log.shape[1] // 3
@@ -349,7 +350,7 @@ class SelfPredictiveModel(RepresentationModel):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
-        if self.is_pixel:
+        if self.is_pixels:
             dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
         if self.is_multimodal:
             dec_args['latent_dim'] = self.encoder.feature_dim
@@ -425,7 +426,7 @@ class InfoSPRModel(RepresentationModel):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
-        if self.is_pixel:
+        if self.is_pixels:
             dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
         if self.is_multimodal:
             self.decoder = MuMoSPRDecoder(**dec_args)
@@ -550,8 +551,8 @@ class MuMoAESPRModel(RepresentationModel):
         del pixel_args['layers_dim']
         pixel_args['state_shape'] = enc_args['state_shape'][1]
         self.encoder = SimpleMuMoEncoder(VectorEncoder(**vector_args),
-                                         # PixelEncoder(**pixel_args))
-                                         Pixel2Pose(**pixel_args))
+                                         PixelEncoder(**pixel_args))
+                                       # Pixel2Pose(**pixel_args))
         # self.encoder.pixel.pose_head = th.nn.Sequential(
         #     th.nn.Linear(vector_args['latent_dim'], enc_args['layers_dim'][-1]),
         #     th.nn.LeakyReLU(),
@@ -570,7 +571,7 @@ class MuMoAESPRModel(RepresentationModel):
         assert self.is_multimodal, "MuMoAESPRModel is a Multimodal only model"
         dec_args = self.args.copy()
         del dec_args['state_shape']
-        del dec_args['layers_filter']
+        # del dec_args['layers_filter']
         dec_args['layers_dim'] = [dec_args['layers_dim'][-1]
                                   ] * (len(dec_args['layers_dim']) - 1)
         self.decoder = MuMoSPRDecoder(**dec_args)
@@ -586,9 +587,12 @@ class MuMoAESPRModel(RepresentationModel):
 
     def compute_representation_loss(self, observations, actions, next_observations):
         # Encode observations
-        obs_z = self.encoder(observations)
+        obs_feats = self.encoder.forward_feats(observations)
+        obs_z = self.encoder.forward_z(obs_feats)
         obs_z1_hat = self.decoder(obs_z, actions)
-        obs_z1 = self.encoder_target(next_observations)
+        obs1_feats = self.encoder_target.forward_feats(next_observations)
+        obs_z1 = self.encoder_target.forward_z(obs1_feats)
+        # obs_z1 = self.encoder_target(next_observations)
         # inverse model loss
         # actions_stack = th.cat(
         #     (actions[actions > 0], actions[actions < 0] * -1), dim=1)
@@ -600,26 +604,91 @@ class MuMoAESPRModel(RepresentationModel):
         # inverse_loss = F.mse_loss(actions, actions_infer)
         # TODO: pixel decoder loss instead spr for high dimension data?
         # pixel2pose model
-        pose_hat, pose = self.encoder.pixel.forward_pose(observations)
-        pose_loss = F.mse_loss(pose_hat, pose)
+        pose_hat_t, pose_t = self.decoder.forward_pose({'vector': observations['vector'],
+                                                        'pixel': obs_feats['pixel']})
+        pose_hat_t1, pose_t1 = self.decoder.forward_pose({'vector': next_observations['vector'],
+                                                          'pixel': obs1_feats['pixel']})
+        contrast_pose = info_nce_loss(pose_hat_t, pose_hat_t1)
+        # pose_loss = self.encoder.pixel.loss(pose_hat, pose)
         # attention block for latent fusion + contrastive
-        z_attn = self.decoder.forward_attn(obs_z1)
-        z_attn_hat = self.decoder.forward_attn(obs_z1_hat)
-        contrastive = info_nce_loss(z_attn, z_attn_hat)
-        # contrast_vector = info_nce_loss(obs_z1['vector'], obs_z1_hat['vector'])
-        # contrast_pixel = info_nce_loss(obs_z1['pixel'], obs_z1_hat['pixel'])
-        # contrastive = (contrast_vector + contrast_pixel) * 0.5
+        # z_attn = self.decoder.forward_attn(obs_z1)
+        # z_attn_hat = self.decoder.forward_attn(obs_z1_hat)
+        # contrastive = info_nce_loss(z_attn, z_attn_hat)
+        contrast_vector = info_nce_loss(obs_z1['vector'], obs_z1_hat['vector'])
+        contrast_pixel = info_nce_loss(obs_z1['pixel'], obs_z1_hat['pixel'])
+        # contrastive = (contrast_vector + contrast_pose) * 0.5
         # L2 over Z
         # latent_loss = latent_l2_loss(z_attn)
+        latent_loss = latent_l2_loss(self.decoder.forward_attn(obs_z1_hat))
         # l2_vector = latent_l2_loss(obs_z1['vector'])
         # l2_pixel = latent_l2_loss(obs_z1['pixel'])
         # latent_loss = (l2_vector + l2_pixel) * 0.5
         # self.log("inverse_loss", inverse_loss.item())
-        self.log("pose_loss", pose_loss.item())
-        # self.log("l2_loss", latent_loss.item())
+        # self.log("pose_loss", pose_loss.item())
+        self.log("contrast_vector", contrast_vector.item())
+        self.log("contrast_pixel", contrast_pixel.item())
+        self.log("contrast_pose", contrast_pose.item())
+        self.log("l2_loss", latent_loss.item())
         # self.update_stopper(latent_loss)
+        loss = contrast_vector + contrast_pose * 1e-2 + contrast_pixel * 1e-4
+        # loss = contrastive + latent_loss * self.decoder_lambda
         # loss = contrastive + latent_loss * self.decoder_lambda + inverse_loss * 1e-3
         # loss = contrastive + latent_loss * self.decoder_lambda + pose_loss * 1e-3
-        loss = contrastive + pose_loss  * self.decoder_lambda
+        # loss = contrastive + pose_loss  * self.decoder_lambda
+        self.log("rep_loss", loss.item())
+        return loss  # *2.
+
+
+class ProprioceptiveModel(RepresentationModel):
+    def __init__(self, *args, **kwargs):
+        super(ProprioceptiveModel, self).__init__('Proprioception', *args, **kwargs)
+        assert not self.is_multimodal, "ProprioceptionModel is not Multimodal ready."
+
+    def _setup_encoder(self):
+        self.encoder = ProprioceptiveEncoder(
+            self.args['state_shape'], self.args['latent_dim'])
+
+    def _setup_decoder(self):
+        dec_args = self.args.copy()
+        del dec_args['state_shape']
+        del dec_args['layers_filter']
+        # if self.is_pixels:
+        #     dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
+        # dec_args['layers_dim'] = [dec_args['layers_dim'][-1]] * (len(dec_args['layers_dim']) - 1)
+        dec_args['latent_dim'] = self.encoder.feature_dim
+        self.decoder = SimpleSPRDecoder(**dec_args)
+
+
+    def set_stopper(self, patience, threshold=0.):
+        # not required
+        pass
+
+    def compute_representation_loss(self, observations, actions, next_observations):
+        # Compare next_latent with transition
+        obs_z = self.encoder(observations)
+        obs_z1_hat = self.decoder(obs_z, actions)
+        obs_z1 = self.encoder_target(next_observations)
+        transition = info_nce_loss(obs_z1, obs_z1_hat)
+
+        # Compare proprioceptive projections as position and velocities
+        pos_hat, vel_hat = self.encoder.forward_pos_vel(observations)
+        _, extero = self.encoder.split_observation(observations)
+        pos, vel = extero[:, :3], extero[:, 3:6]
+        # pos_loss = info_nce_loss(pos, pos_hat)
+        # vel_loss = info_nce_loss(vel, vel_hat)
+        # proj_loss = pos_loss * 1e-3 + vel_loss * 1e-2
+        pos_loss = F.huber_loss(pos, pos_hat)
+        vel_loss = F.huber_loss(vel, vel_hat)
+        proj_loss = pos_loss + vel_loss
+        # contrastive + MSE
+        # pos_hat1, vel_hat1 = self.encoder_target.forward_pos_vel(next_observations)
+        # pos_loss = info_nce_loss(pos_hat, pos_hat1) + pos_dist #* 1e-03
+        # vel_loss = info_nce_loss(vel_hat, vel_hat1) + vel_dist 
+        # proj_loss = pos_loss * 1e-3 + vel_loss * 1e-2
+
+        # loss addition
+        self.log("rep_pos_loss", pos_loss.item())
+        self.log("rep_vel_loss", vel_loss.item())
+        loss = transition + proj_loss * self.decoder_lambda
         self.log("rep_loss", loss.item())
         return loss  # *2.

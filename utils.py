@@ -149,6 +149,8 @@ def parse_srl_args(parser):
                          help='Whether if jointly optimize representation with RL updates.')
     arg_srl.add_argument("--model-ispr-mumo", action='store_true',
                          help='Whether if use the InfoNCE SimpleSPR Multimodal version model.')
+    arg_srl.add_argument("--model-proprio", action='store_true',
+                         help='Whether if use the Proprioceptive version model.')
     # arg_srl.add_argument("--model-vector-difference", action='store_true',
     #                      help='Whether if use the VectorDifference reconstruction model.')
     return arg_srl
@@ -305,6 +307,8 @@ def args2ae_config(args, env_params):
         model_name = 'IntrospectiveInfoSPR'
     elif _args.get('model_ispr_mumo', False):
         model_name = 'MuMoAESPR'
+    elif _args.get('model_proprio', False):
+        model_name = 'Proprioceptive'
     else:
         raise ValueError('SRL model not recognized...')
 
@@ -448,7 +452,6 @@ class DroneEnvMonitor(Monitor):
 
     def export_env_data(self, outpath: Optional[Union[str, Path]] = None) -> None:
         env_data = {}
-        env_data['target_pos'] = str(self.env.unwrapped.vtarget.position)
         env_data['target_quadrants'] = str(self.env.unwrapped.quadrants.tolist())
         env_data['flight_area'] = str(self.env.unwrapped.flight_area.tolist())
         if outpath is None:

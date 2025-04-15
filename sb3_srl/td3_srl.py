@@ -29,10 +29,13 @@ class SRLTD3Policy(TD3Policy, SRLPolicy):
     def __init__(self, *args,
                  ae_config: dict = {},
                  encoder_tau: float = 0.999, **kwargs):
-        self.features_dim = SRLPolicy.get_features_dim(ae_config)
         kwargs['features_extractor_class'] = DictFlattenExtractor
-        TD3Policy.__init__(self, *args, **kwargs)
         SRLPolicy.__init__(self, ae_config, encoder_tau)
+        TD3Policy.__init__(self, *args, **kwargs)
+    
+    def _build(self, lr_schedule):
+        SRLPolicy._build(self, lr_schedule)
+        TD3Policy._build(self, lr_schedule)
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)

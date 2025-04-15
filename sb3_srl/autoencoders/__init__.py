@@ -12,6 +12,7 @@ from .models import SelfPredictiveModel
 from .models import InfoSPRModel
 from .models import IntrospectiveInfoSPR
 from .models import MuMoAESPRModel
+from .models import ProprioceptiveModel
 
 
 def instance_autoencoder(ae_type: str, ae_params: dict) -> RepresentationModel:

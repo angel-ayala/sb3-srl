@@ -7,10 +7,10 @@ Created on Thu Feb  6 11:23:42 2025
 """
 from typing import List
 
-import numpy as np
 import torch as th
 from torch import nn
 import torch.nn.functional as F
+from pytorch3d.transforms.rotation_conversions import euler_angles_to_matrix, matrix_to_quaternion
 
 from stable_baselines3.common.torch_layers import create_mlp
 
@@ -102,15 +102,18 @@ class VectorEncoder(Conv1dMLP):
         self.fc = nn.Linear(latent_dim, latent_dim)
         self.ln = nn.LayerNorm(self.feature_dim)
 
-    def forward_linear(self, obs, detach=False):
-        return F.leaky_relu(super().forward(obs))
+    def forward_feats(self, obs):
+        return super().forward(obs)
+
+    def forward_z(self, feats):
+        out = self.ln(self.fc(feats))
+        return th.tanh(out)
 
     def forward(self, obs, detach=False):
-        z = self.forward_linear(obs)
+        feats = F.leaky_relu(self.forward_feats(obs))
         if detach:
-            z = z.detach()
-        out = self.ln(self.fc(z))
-        return th.tanh(out)
+            feats = feats.detach()
+        return self.forward_z(feats)
 
     def copy_weights_from(self, source):
         """Tie hidden layers"""
@@ -230,24 +233,26 @@ class PixelEncoder(nn.Module):
         self.fc = nn.Linear(layers_filter[-1] * out_dim * out_dim, self.feature_dim)
         self.ln = nn.LayerNorm(self.feature_dim)
 
-    def forward_conv(self, obs):
+    def forward_feats(self, obs):
         obs = obs.float() / 255.  # normalize
         conv = F.leaky_relu(self.convs[0](obs.float()))
         for i in range(1, self.num_layers):
-            conv = F.leaky_relu(self.convs[i](conv))
+            conv = self.convs[i](conv)
+            if i + 1 < self.num_layers:
+                conv = F.leaky_relu(conv)
+        # last layer linear
         return conv
 
+    def forward_z(self, feats):
+        feats = feats.view(feats.size(0), -1)
+        z = self.ln(self.fc(feats))
+        return th.tanh(z)
+
     def forward(self, obs, detach=False):
-        h = self.forward_conv(obs)
+        feats = F.leaky_relu(self.forward_feats(obs))
         if detach:
-            h = h.detach()
-
-        h = h.view(h.size(0), -1)
-        h_fc = self.fc(h)
-        h_norm = self.ln(h_fc)
-        h = th.tanh(h_norm)
-
-        return h
+            feats = feats.detach()
+        return self.forward_z(feats)
 
     def copy_weights_from(self, source):
         """Tie convolutional layers"""
@@ -301,13 +306,22 @@ class SimpleMuMoEncoder(nn.Module):
         self.vector = vector_encoder
         self.pixel = pixel_encoder
 
+    def forward_feats(self, obs):
+        feats_vector = self.vector.forward_feats(obs['vector'])
+        feats_pixel = self.pixel.forward_feats(obs['pixel'])
+        return {'vector': feats_vector, 'pixel': feats_pixel}
+
+    def forward_z(self, obs):
+        z_vector = self.vector.forward_z(obs['vector'])
+        z_pixel = self.pixel.forward_z(obs['pixel'])
+        return {'vector': z_vector, 'pixel': z_pixel}
+
     def forward(self, obs, detach=False):
-        z_1 = self.vector(obs['vector'])
-        z_2 = self.pixel(obs['pixel'])
+        feats = self.forward_feats(obs)
         if detach:
-            z_1 = z_1.detach()
-            z_2 = z_2.detach()
-        return {'vector': z_1, 'pixel': z_2}
+            feats['vector'] = feats['vector'].detach()
+            feats['pixel'] = feats['pixel'].detach()
+        return self.forward_z(feats)
 
 
 class MixMuMoEncoder(nn.Module):
@@ -353,30 +367,59 @@ class Pixel2Pose(nn.Module):
                  layers_filter: List[int] = [32, 32]):
         super(Pixel2Pose, self).__init__()
         self.encoder = PixelEncoder(state_shape, latent_dim, layers_filter)
+        self.encoder.convs.append(nn.Conv2d(layers_filter[-1], latent_dim, 3, stride=1))
+        self.encoder.avg_pool = nn.AdaptiveAvgPool2d(1)
+
         self.feature_dim = self.encoder.feature_dim
         self.pose_decoder = nn.Sequential(
             nn.Linear(latent_dim, layers_dim[-1]),
             nn.LeakyReLU(),
-            nn.Linear(layers_dim[-1], 6))
+            nn.Linear(layers_dim[-1], 7))
 
     def forward(self, observations):
         return self.encoder(observations)
 
     def forward_pose(self, observations):
-        pose = observations['vector']
-        pose = th.cat((pose[:, :3], pose[:, 6:9]), dim=1)
+        # pose = observations['vector'][..., :12]
+        # vector_obs = observations['vector']
+        pose_q = matrix_to_quaternion(
+            euler_angles_to_matrix(observations['vector'][:, :3], convention='XYZ'))
+        pose = th.cat((observations['vector'][:, 6:9], pose_q), dim=1)
         z = self.encoder.forward_conv(observations['pixel'])
-        z = self.encoder.fc(z.view(z.size(0), -1))
+        # z = self.encoder.fc(z.view(z.size(0), -1))
+        z = self.encoder.avg_pool(z).squeeze()
         pose_hat = self.pose_decoder(z)
         return pose_hat, pose
 
+    def loss(self, pose_hat, pose, beta=150):
+        position = pose_hat[:, :3]
+        orientation = pose_hat[:, -4:]
+        position_target = pose[:, :3]
+        orientation_target = pose[:, -4:]
+
+        orientation = F.normalize(orientation, p=2, dim=1)
+        orientation_target = F.normalize(orientation_target, p=2, dim=1)
+        position_loss = F.mse_loss(position_target, position)
+        orientation_loss = F.mse_loss(orientation_target, orientation)
+
+        loss = position_loss + beta * orientation_loss
+        return loss
 
 class MuMoSPRDecoder(nn.Module):
     def __init__(self, action_shape: tuple,
                  latent_dim: int,
-                 layers_dim: List[int] = [256]):
+                 layers_dim: List[int] = [256],
+                 layers_filter: List[int] = [32, 32]):
         super(MuMoSPRDecoder, self).__init__()
         self.pixel = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
+        self.pixel.pose_feats = nn.Sequential(
+            nn.Conv2d(layers_filter[-1], latent_dim, 3, stride=1),
+            nn.AdaptiveAvgPool2d(1))
+        self.pixel.pose_head = nn.Sequential(
+            nn.Linear(latent_dim, layers_dim[-1]),
+            nn.LeakyReLU(),
+            nn.Linear(layers_dim[-1], 7))
+
         self.vector = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
         # self.vector.action_infer = nn.Sequential(
         #         nn.Linear(latent_dim, layers_dim[-1]),
@@ -397,6 +440,30 @@ class MuMoSPRDecoder(nn.Module):
         #         nn.Sigmoid())
         self.vector.value = nn.Linear(latent_dim, latent_dim)
 
+    def forward_pose(self, observations):
+        # pose = observations['vector'][..., :12]
+        # vector_obs = observations['vector']
+        pose_q = matrix_to_quaternion(
+            euler_angles_to_matrix(observations['vector'][:, :3], convention='XYZ'))
+        pose = th.cat((observations['vector'][:, 6:9], pose_q), dim=1)
+        z = self.pixel.pose_feats(observations['pixel']).squeeze()
+        pose_hat = self.pixel.pose_head(z)
+        return pose_hat, pose
+
+    def pose_loss(self, pose_hat, pose, beta=150):
+        position = pose_hat[:, :3]
+        orientation = pose_hat[:, -4:]
+        position_target = pose[:, :3]
+        orientation_target = pose[:, -4:]
+
+        orientation = F.normalize(orientation, p=2, dim=1)
+        orientation_target = F.normalize(orientation_target, p=2, dim=1)
+        position_loss = F.mse_loss(position_target, position)
+        orientation_loss = F.mse_loss(orientation_target, orientation)
+
+        loss = position_loss + beta * orientation_loss
+        return loss
+
     def forward(self, obs, action):
         return {'vector': self.vector(obs['vector'], action),
                 'pixel': self.pixel(obs['pixel'], action)}
@@ -409,3 +476,52 @@ class MuMoSPRDecoder(nn.Module):
         qk = query.squeeze(0) @ key.T
         out = alpha * qk @ value + beta * observations['pixel']
         return out
+
+
+class ProprioceptiveEncoder(nn.Module):
+    def __init__(self,
+                 state_shape: tuple,
+                 latent_dim: int,
+                 layers_dim: List[int] = [256, 256],
+                 n_data: int = 10):  # = 3 imu + 3 gyro + 4 motors
+        assert state_shape[-1] == 22, "Observation state insufficient length, (IMU, Gyro, GPS, Vel, TargetSensors, Motors)"
+        super(ProprioceptiveEncoder, self).__init__()
+        if len(state_shape) > 1:
+            proprio_shape = (state_shape[0], n_data)
+            extero_shape = (state_shape[0], 22 - n_data)
+        else:
+            proprio_shape = (n_data, )
+            extero_shape = (22 - n_data, )
+            
+        self.feature_dim = latent_dim * 2
+        self.proprio = VectorEncoder(proprio_shape, latent_dim, layers_dim)
+        self.extero = VectorEncoder(extero_shape, latent_dim, layers_dim)
+        self.pos_proj = create_mlp
+        layers = create_mlp(latent_dim, 3, layers_dim, nn.LeakyReLU, False, True)
+        self.pos_proj = nn.Sequential(*layers)
+        layers = create_mlp(latent_dim, 3, layers_dim, nn.LeakyReLU, False, True)
+        self.vel_proj = nn.Sequential(*layers)
+
+    def split_observation(self, observation):
+        # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
+        return th.cat((observation[:, :6], observation[:, -4:]), dim=1), observation[:, 6:18]
+
+    def forward_pos_vel(self, obs):
+        prop_obs, _ = self.split_observation(obs)
+        z = self.proprio.forward_feats(prop_obs)
+        return self.pos_proj(z), self.vel_proj(z)
+
+    def forward_feats(self, obs):
+        prop_obs, exte_obs = self.split_observation(obs)
+        return self.proprio.forward_feats(prop_obs), self.extero.forward_feats(exte_obs)
+
+    def forward_z(self, prop_obs, exte_obs):
+        z_prop = self.proprio.forward_z(prop_obs)
+        z_exte = self.extero.forward_z(exte_obs)
+        return z_prop, z_exte
+
+    def forward(self, obs, detach=False):
+        prop_obs, exte_obs = self.split_observation(obs)
+        z_prop = self.proprio(prop_obs, detach)
+        z_exte = self.extero(exte_obs, detach)
+        return th.cat((z_prop, z_exte), dim=1)

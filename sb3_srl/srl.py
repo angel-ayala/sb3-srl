@@ -16,19 +16,18 @@ from sb3_srl.autoencoders import instance_autoencoder
 class SRLPolicy:
     def __init__(self, ae_config: Tuple[str, dict], encoder_tau: float = 0.999):
         self.encoder_tau = encoder_tau
-        self.make_autencoder(ae_config)
+        self.ae_config = ae_config
 
     @property
     def is_multimodal(self):
         return self.rep_model.is_multimodal
 
-    @staticmethod
-    def get_features_dim(ae_config):
-        ae_type, ae_params = ae_config
-        return ae_params['latent_dim'] #+ ae_params['latent_dim'] * ae_params['is_multimodal']
+    @property
+    def features_dim(self):
+        return self.rep_model.encoder.feature_dim #ae_params['latent_dim'] #+ ae_params['latent_dim'] * ae_params['is_multimodal']
 
-    def make_autencoder(self, ae_config):
-        ae_type, ae_params = ae_config
+    def _build(self, lr_schedule=None):
+        ae_type, ae_params = self.ae_config
         self.rep_model = instance_autoencoder(ae_type, ae_params)
         self.rep_model.adam_optimizer(ae_params['encoder_lr'],
                                       ae_params['decoder_lr'])
