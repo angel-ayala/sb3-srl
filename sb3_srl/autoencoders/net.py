@@ -503,8 +503,8 @@ class ProprioceptiveEncoder(nn.Module):
                 extero_shape = (extero_shape[-1] + 256, )
 
         self.feature_dim = latent_dim * 2
-        self.proprio = VectorEncoder(proprio_shape, latent_dim, layers_dim)
-        self.extero = VectorEncoder(extero_shape, latent_dim, layers_dim)
+        self.proprio = VectorEncoder((proprio_shape[-1], ), latent_dim, layers_dim)
+        self.extero = VectorEncoder((extero_shape[-1], ), latent_dim, layers_dim)
 
         layers = create_mlp(latent_dim, 4, layers_dim, nn.LeakyReLU, False, True)
         self.vel_proj = nn.Sequential(*layers)
@@ -515,15 +515,23 @@ class ProprioceptiveEncoder(nn.Module):
     def prop_observation(self, observation):
         if isinstance(observation, dict):
             observation = observation['vector']
+        if len(observation.shape) == 3:
+            observation = observation[:, -1].squeeze(1)
         return th.cat((observation[:, :6], observation[:, -4:]), dim=1)
 
     def exte_observation(self, observation):
         if isinstance(observation, dict):
             pixel_feats = self.pixel(observation['pixel'])
-            exterioceptive = th.cat(
-                (observation['vector'][:, 6:18], pixel_feats), dim=1)
+            vector_feats = observation['vector']
+            if len(vector_feats.shape) == 3:
+                vector_feats = vector_feats[:, -1].squeeze(1)
+            vector_feats = vector_feats[:, 6:18]
+            exterioceptive = th.cat((vector_feats, pixel_feats), dim=1)
         else:
-            exterioceptive = observation[:, 6:18]
+            if len(observation.shape) == 3:
+                exterioceptive = observation[:, -1, 6:18]
+            else:
+                exterioceptive = observation[:, 6:18]
         return exterioceptive
 
     def split_observation(self, observation):

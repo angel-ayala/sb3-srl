@@ -650,8 +650,11 @@ class ProprioceptiveModel(RepresentationModel):
         if self.is_multimodal:
             state_shape = self.args['state_shape'][0]
             pixel_shape = self.args['state_shape'][1]
+
         self.encoder = ProprioceptiveEncoder(
-            state_shape, self.args['latent_dim'], pixel_shape=pixel_shape)
+            state_shape, self.args['latent_dim'],
+            layers_dim=self.args['layers_dim'],
+            pixel_shape=pixel_shape)
 
     def _setup_decoder(self):
         dec_args = self.args.copy()
@@ -673,13 +676,13 @@ class ProprioceptiveModel(RepresentationModel):
     def forward_z(self, observation, detach=False):
         obs_z = self.encoder(observation, detach=detach) 
         if self.is_multimodal and not isinstance(obs_z, dict):
-            obs_z = {'vector': obs_z}
+            obs_z = {'pixel': obs_z}
         return obs_z
 
     def target_forward_z(self, observation, detach=False):
         obs_z = self.encoder_target(observation, detach=detach)
         if self.is_multimodal and not isinstance(obs_z, dict):
-            obs_z = {'vector': obs_z}
+            obs_z = {'pixel': obs_z}
         return obs_z
 
     def set_stopper(self, patience, threshold=0.):
