@@ -5,7 +5,7 @@ Created on Thu Feb  6 11:23:42 2025
 
 @author: angel
 """
-from typing import List
+from typing import List, Optional
 
 import torch as th
 from torch import nn
@@ -480,36 +480,63 @@ class MuMoSPRDecoder(nn.Module):
 
 class ProprioceptiveEncoder(nn.Module):
     def __init__(self,
-                 state_shape: tuple,
+                 vector_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256],
-                 n_data: int = 10):  # = 3 imu + 3 gyro + 4 motors
-        assert state_shape[-1] == 22, "Observation state insufficient length, (IMU, Gyro, GPS, Vel, TargetSensors, Motors)"
+                 pixel_shape: Optional[tuple] = None):
+        assert vector_shape[-1] == 22, "Observation state insufficient length, (IMU, Gyro, GPS, Vel, TargetSensors, Motors)"
         super(ProprioceptiveEncoder, self).__init__()
-        if len(state_shape) > 1:
-            proprio_shape = (state_shape[0], n_data)
-            extero_shape = (state_shape[0], 22 - n_data)
+        n_data = 10  # = 3 imu + 3 gyro + 4 motors
+        is_stack = len(vector_shape) > 1
+        if is_stack:
+            proprio_shape = (vector_shape[0], n_data)
+            extero_shape = (vector_shape[0], 22 - n_data)
         else:
             proprio_shape = (n_data, )
             extero_shape = (22 - n_data, )
-            
+
+        if pixel_shape is not None:
+            self.pixel = PixelEncoder(pixel_shape, 256, [32, 32])
+            if is_stack:
+                extero_shape = (extero_shape[0], extero_shape[1] + 256)
+            else:
+                extero_shape = (extero_shape[-1] + 256, )
+
         self.feature_dim = latent_dim * 2
         self.proprio = VectorEncoder(proprio_shape, latent_dim, layers_dim)
         self.extero = VectorEncoder(extero_shape, latent_dim, layers_dim)
-        self.pos_proj = create_mlp
-        layers = create_mlp(latent_dim, 3, layers_dim, nn.LeakyReLU, False, True)
-        self.pos_proj = nn.Sequential(*layers)
-        layers = create_mlp(latent_dim, 3, layers_dim, nn.LeakyReLU, False, True)
+
+        layers = create_mlp(latent_dim, 4, layers_dim, nn.LeakyReLU, False, True)
         self.vel_proj = nn.Sequential(*layers)
+
+        layers = create_mlp(latent_dim, 3, layers_dim, nn.LeakyReLU, False, True)
+        self.home_proj = nn.Sequential(*layers)
+
+    def prop_observation(self, observation):
+        if isinstance(observation, dict):
+            observation = observation['vector']
+        return th.cat((observation[:, :6], observation[:, -4:]), dim=1)
+
+    def exte_observation(self, observation):
+        if isinstance(observation, dict):
+            pixel_feats = self.pixel(observation['pixel'])
+            exterioceptive = th.cat(
+                (observation['vector'][:, 6:18], pixel_feats), dim=1)
+        else:
+            exterioceptive = observation[:, 6:18]
+        return exterioceptive
 
     def split_observation(self, observation):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
-        return th.cat((observation[:, :6], observation[:, -4:]), dim=1), observation[:, 6:18]
+        return self.prop_observation(observation), self.exte_observation(observation)
 
-    def forward_pos_vel(self, obs):
-        prop_obs, _ = self.split_observation(obs)
+    def forward_vel(self, prop_obs):
         z = self.proprio.forward_feats(prop_obs)
-        return self.pos_proj(z), self.vel_proj(z)
+        return self.vel_proj(z)
+
+    def forward_home(self, extero_obs):
+        z = self.extero.forward_feats(extero_obs)
+        return self.home_proj(z)
 
     def forward_feats(self, obs):
         prop_obs, exte_obs = self.split_observation(obs)

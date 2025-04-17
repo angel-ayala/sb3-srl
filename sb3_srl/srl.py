@@ -73,11 +73,11 @@ class SRLAlgorithm:
     def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
         state_dicts = ["policy.rep_model.encoder"]
         state_dicts += ["policy.rep_model.encoder_optim"]
-        if self.policy.is_multimodal:
+        if hasattr(self.policy.rep_model, 'encoder_pixel_optim'):
             state_dicts += ["policy.rep_model.encoder_pixel_optim"]
         state_dicts += ["policy.rep_model.decoder"]
         state_dicts += ["policy.rep_model.decoder_optim"]
-        if self.policy.rep_model.is_introspection:
+        if hasattr(self.policy.rep_model, 'probability_optim'):
             state_dicts += ["policy.rep_model.probability"]
             state_dicts += ["policy.rep_model.probability_optim"]
 
