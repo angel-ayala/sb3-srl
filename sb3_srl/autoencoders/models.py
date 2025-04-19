@@ -11,6 +11,7 @@ import copy
 import torch as th
 import torchvision
 from torch.nn import functional as F
+from torchvision.transforms import AutoAugment
 from sklearn.preprocessing import MinMaxScaler
 from stable_baselines3.common.logger import Image as ImageLogger
 
@@ -30,6 +31,7 @@ from .net import VectorDecoder
 from .net import VectorEncoder
 from .net import weight_init
 from .utils import compute_mutual_information
+from .utils import dist2orientation
 from .utils import info_nce_loss
 from .utils import latent_l2_loss
 from .utils import obs2target_dist
@@ -643,6 +645,7 @@ class ProprioceptiveModel(RepresentationModel):
     def __init__(self, *args, **kwargs):
         super(ProprioceptiveModel, self).__init__('Proprioception', *args, **kwargs)
         assert not self.is_pixels or self.is_multimodal, "ProprioceptionModel is not Pixel-based ready."
+        self.home_pos = th.FloatTensor([0., 0., 0.3])
 
     def _setup_encoder(self):
         state_shape = self.args['state_shape']
@@ -650,11 +653,16 @@ class ProprioceptiveModel(RepresentationModel):
         if self.is_multimodal:
             state_shape = self.args['state_shape'][0]
             pixel_shape = self.args['state_shape'][1]
-
+            self.augment_model = AutoAugment()
         self.encoder = ProprioceptiveEncoder(
             state_shape, self.args['latent_dim'],
             layers_dim=self.args['layers_dim'],
             pixel_shape=pixel_shape)
+    
+    def to(self, device):
+        super().to(device)
+        self.augment_model = self.augment_model.to(device)
+        self.home_pos = self.home_pos.to(device)
 
     def _setup_decoder(self):
         dec_args = self.args.copy()
@@ -674,13 +682,13 @@ class ProprioceptiveModel(RepresentationModel):
         self.encoder_optim.step()
     
     def forward_z(self, observation, detach=False):
-        obs_z = self.encoder(observation, detach=detach) 
+        obs_z = self.encoder(observation, detach=detach)[0]
         if self.is_multimodal and not isinstance(obs_z, dict):
             obs_z = {'pixel': obs_z}
         return obs_z
 
     def target_forward_z(self, observation, detach=False):
-        obs_z = self.encoder_target(observation, detach=detach)
+        obs_z = self.encoder_target(observation, detach=detach)[0]
         if self.is_multimodal and not isinstance(obs_z, dict):
             obs_z = {'pixel': obs_z}
         return obs_z
@@ -690,28 +698,44 @@ class ProprioceptiveModel(RepresentationModel):
         pass
 
     def compute_representation_loss(self, observations, actions, next_observations):
-        # Compare next_latent with transition
-        obs_z = self.encoder(observations)
+        if self.is_multimodal:
+            # augment pixel observation
+            for i in range(0, observations['pixel'].shape[1], 3):
+                observations['pixel'][:, i:i+3] = self.augment_model(
+                    observations['pixel'][:, i:i+3])
+        loss = 0
+        # Compare next_latent with curr_latent
+        obs_z, vel_hat, home_hat, exte_feats = self.encoder(observations)
         obs_z1_hat = self.decoder(obs_z, actions)
-        obs_z1 = self.encoder_target(next_observations)
+        obs_z1, _, _, _ = self.encoder_target(next_observations)
         transition = info_nce_loss(obs_z1, obs_z1_hat)
+        loss += transition
 
-        # Compare proprioceptive projections as position and velocities
+        # split observation in proprioceptive an exteroceptive
         proprio, extero = self.encoder.split_observation(observations)
-
         # linear velocities + yaw rate inference
-        vel_hat = self.encoder.forward_vel(proprio)
         vel = th.cat((extero[:, 3:6], proprio[:, 5:6]), dim=1)
         vel_loss = F.huber_loss(vel, vel_hat)
-        proj_loss = vel_loss
-
-        # distance, orientation, and elevation to home
-        # home_hat = self.encoder.forward_home(extero)
-        # TODO compute pose (dist, orie, elev)
-
-        # loss addition
-        loss = transition + proj_loss * self.decoder_lambda
-
+        loss += vel_loss * 1e-4
         self.log("rep_vel_loss", vel_loss.item())
+
+        # Pose distance to home inference
+        distance = extero[:, :3] - self.home_pos
+        home_ori = dist2orientation(distance)#.unsqueeze(1)
+        _pi = round(th.pi, 6)
+        delta_theta = (home_ori - proprio[:, 2] + _pi) % (2 * _pi) - _pi
+        orientation = th.round(delta_theta, decimals=6).unsqueeze(1)
+        elevation = distance[:, -1].unsqueeze(1)
+        distance = th.linalg.norm(distance, dim=1, keepdims=True)
+        home = th.cat((distance, orientation, elevation), dim=1)
+        home_loss = F.huber_loss(home, home_hat)
+        loss += home_loss * 1e-5
+        self.log("rep_home_loss", home_loss.item())
+
+        if self.is_multimodal:
+            l2_pixel = latent_l2_loss(exte_feats[:, -50:])
+            loss += l2_pixel * self.decoder_lambda
+            self.log("l2_pixel_loss", l2_pixel.item())
+
         self.log("rep_loss", loss.item())
         return loss  # *2.

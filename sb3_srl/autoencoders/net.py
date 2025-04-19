@@ -478,6 +478,53 @@ class MuMoSPRDecoder(nn.Module):
         return out
 
 
+class NatureCNN(nn.Module):
+    """
+    CNN from DQN Nature paper:
+    """
+
+    def __init__(
+        self,
+        pixel_shape: tuple,
+        features_dim: int = 512,
+        output_dim: int = 256,
+        normalized_image: bool = False) -> None:
+        super().__init__()
+        # We assume CxHxW images (channels first)
+        n_input_channels = pixel_shape[0]
+        self.cnn = nn.Sequential(
+            nn.Conv2d(n_input_channels, 32, kernel_size=8, stride=4, padding=0),
+            nn.LeakyReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+            nn.LeakyReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
+            nn.LeakyReLU(),
+            nn.Flatten(),
+        )
+        self.normalized_image = normalized_image
+        # self.features_dim = features_dim
+        self.linear = nn.Sequential(nn.Linear(3136, features_dim),
+                                    nn.LeakyReLU(),
+                                    nn.Linear(features_dim, output_dim))
+        self.fc_feats = nn.Sequential(nn.Linear(output_dim, output_dim),
+                                      nn.LayerNorm(output_dim),
+                                      nn.Tanh())
+
+    def forward_feats(self, observations: th.Tensor) -> th.Tensor:
+        if not self.normalized_image:
+            observations = observations.float() / 255.
+        return self.linear(self.cnn(observations))
+
+    def forward_z(self, feats: th.Tensor) -> th.Tensor:
+        return self.fc_feats(feats)
+
+    def forward(self, observations: th.Tensor, detach: bool = False) -> th.Tensor:
+        feats = self.forward_feats(observations)
+        if detach:
+            feats = feats.deatch()
+        return self.forward_z(feats)
+
+
 class ProprioceptiveEncoder(nn.Module):
     def __init__(self,
                  vector_shape: tuple,
@@ -486,30 +533,25 @@ class ProprioceptiveEncoder(nn.Module):
                  pixel_shape: Optional[tuple] = None):
         assert vector_shape[-1] == 22, "Observation state insufficient length, (IMU, Gyro, GPS, Vel, TargetSensors, Motors)"
         super(ProprioceptiveEncoder, self).__init__()
-        n_data = 10  # = 3 imu + 3 gyro + 4 motors
-        is_stack = len(vector_shape) > 1
-        if is_stack:
-            proprio_shape = (vector_shape[0], n_data)
-            extero_shape = (vector_shape[0], 22 - n_data)
-        else:
-            proprio_shape = (n_data, )
-            extero_shape = (22 - n_data, )
+        self.feature_dim = 0
+        proprio_input = 10 # = 3 imu + 3 gyro + 4 motors
+        extero_input = 22 - proprio_input
+        home_input = latent_dim
 
         if pixel_shape is not None:
-            self.pixel = PixelEncoder(pixel_shape, 256, [32, 32])
-            if is_stack:
-                extero_shape = (extero_shape[0], extero_shape[1] + 256)
-            else:
-                extero_shape = (extero_shape[-1] + 256, )
+            self.pixel = NatureCNN(pixel_shape, features_dim=512, output_dim=50)
+            self.feature_dim += 50
+            # extero_input += self.pixel.features_dim
+            home_input += 50
 
-        self.feature_dim = latent_dim * 2
-        self.proprio = VectorEncoder((proprio_shape[-1], ), latent_dim, layers_dim)
-        self.extero = VectorEncoder((extero_shape[-1], ), latent_dim, layers_dim)
+        self.proprio = VectorEncoder((proprio_input, ), latent_dim, layers_dim)
+        self.extero = VectorEncoder((extero_input, ), latent_dim, layers_dim)
+        self.feature_dim += self.proprio.feature_dim + self.extero.feature_dim
 
         layers = create_mlp(latent_dim, 4, layers_dim, nn.LeakyReLU, False, True)
         self.vel_proj = nn.Sequential(*layers)
 
-        layers = create_mlp(latent_dim, 3, layers_dim, nn.LeakyReLU, False, True)
+        layers = create_mlp(home_input, 3, layers_dim, nn.LeakyReLU, False, True)
         self.home_proj = nn.Sequential(*layers)
 
     def prop_observation(self, observation):
@@ -521,42 +563,40 @@ class ProprioceptiveEncoder(nn.Module):
 
     def exte_observation(self, observation):
         if isinstance(observation, dict):
-            pixel_feats = self.pixel(observation['pixel'])
-            vector_feats = observation['vector']
-            if len(vector_feats.shape) == 3:
-                vector_feats = vector_feats[:, -1].squeeze(1)
-            vector_feats = vector_feats[:, 6:18]
-            exterioceptive = th.cat((vector_feats, pixel_feats), dim=1)
+            observation = observation['vector']
+        if len(observation.shape) == 3:
+            exterioceptive = observation[:, -1, 6:18].squeeze(1)
         else:
-            if len(observation.shape) == 3:
-                exterioceptive = observation[:, -1, 6:18]
-            else:
-                exterioceptive = observation[:, 6:18]
+            exterioceptive = observation[:, 6:18]
         return exterioceptive
 
     def split_observation(self, observation):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
         return self.prop_observation(observation), self.exte_observation(observation)
 
-    def forward_vel(self, prop_obs):
-        z = self.proprio.forward_feats(prop_obs)
-        return self.vel_proj(z)
-
-    def forward_home(self, extero_obs):
-        z = self.extero.forward_feats(extero_obs)
-        return self.home_proj(z)
-
-    def forward_feats(self, obs):
-        prop_obs, exte_obs = self.split_observation(obs)
-        return self.proprio.forward_feats(prop_obs), self.extero.forward_feats(exte_obs)
-
-    def forward_z(self, prop_obs, exte_obs):
-        z_prop = self.proprio.forward_z(prop_obs)
-        z_exte = self.extero.forward_z(exte_obs)
+    def forward_z(self, prop_feat, exte_feats):
+        z_prop = self.proprio.forward_z(prop_feat)
+        z_exte = self.extero.forward_z(exte_feats)
         return z_prop, z_exte
 
     def forward(self, obs, detach=False):
-        prop_obs, exte_obs = self.split_observation(obs)
-        z_prop = self.proprio(prop_obs, detach)
-        z_exte = self.extero(exte_obs, detach)
-        return th.cat((z_prop, z_exte), dim=1)
+        # forward features
+        prop_obs = self.prop_observation(obs)
+        # exte_obs = self.forward_exte_obs(obs)
+        exte_obs = self.exte_observation(obs)
+        prop_feat = self.proprio.forward_feats(prop_obs)
+        exte_feats = self.extero.forward_feats(exte_obs)
+        # forward latent vector
+        prop_z, exte_z = self.forward_z(prop_feat, exte_feats)
+        z_stack = th.cat((prop_z, exte_z), dim=1)
+        # forward pixel observation
+        if hasattr(self, 'pixel'):
+            pixel_feats = self.pixel.forward_feats(obs['pixel'])
+            z_pixel = self.pixel.forward_z(pixel_feats)
+            z_stack = th.cat((z_stack, z_pixel), dim=1)
+            exte_feats = th.cat((exte_feats, pixel_feats), dim=1)
+        # forward body velocities projection
+        vel_out = self.vel_proj(prop_feat)
+        # forward home distance projection
+        home_out = self.home_proj(exte_feats)
+        return z_stack, vel_out, home_out, exte_feats
