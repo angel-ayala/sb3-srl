@@ -18,6 +18,7 @@ from stable_baselines3.common.logger import Image as ImageLogger
 from sb3_srl.introspection import IntrospectionBelief
 from sb3_srl.utils import EarlyStopper
 
+from .net import GuidedSPRDecoder
 from .net import MuMoSPRDecoder
 from .net import PixelDecoder
 from .net import Pixel2Pose
@@ -650,26 +651,31 @@ class ProprioceptiveModel(RepresentationModel):
     def _setup_encoder(self):
         state_shape = self.args['state_shape']
         pixel_shape = None
+        pixel_dim = None
         if self.is_multimodal:
             state_shape = self.args['state_shape'][0]
             pixel_shape = self.args['state_shape'][1]
+            pixel_dim = 50
             self.augment_model = AutoAugment()
         self.encoder = ProprioceptiveEncoder(
             state_shape, self.args['latent_dim'],
             layers_dim=self.args['layers_dim'],
-            pixel_shape=pixel_shape)
+            pixel_shape=pixel_shape,
+            pixel_dim=pixel_dim)
     
     def to(self, device):
         super().to(device)
-        self.augment_model = self.augment_model.to(device)
         self.home_pos = self.home_pos.to(device)
+        if self.is_multimodal:
+            self.augment_model = self.augment_model.to(device)
 
     def _setup_decoder(self):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
-        dec_args['latent_dim'] = self.encoder.feature_dim
-        self.decoder = SimpleSPRDecoder(**dec_args)
+        if self.is_multimodal:
+            dec_args['pixel_dim'] = self.encoder.pixel_dim
+        self.decoder = GuidedSPRDecoder(**dec_args)
 
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
@@ -680,15 +686,15 @@ class ProprioceptiveModel(RepresentationModel):
 
     def encoder_optim_step(self):
         self.encoder_optim.step()
-    
+
     def forward_z(self, observation, detach=False):
-        obs_z = self.encoder(observation, detach=detach)[0]
+        obs_z = self.encoder(observation, detach=detach)
         if self.is_multimodal and not isinstance(obs_z, dict):
             obs_z = {'pixel': obs_z}
         return obs_z
 
     def target_forward_z(self, observation, detach=False):
-        obs_z = self.encoder_target(observation, detach=detach)[0]
+        obs_z = self.encoder_target(observation, detach=detach)
         if self.is_multimodal and not isinstance(obs_z, dict):
             obs_z = {'pixel': obs_z}
         return obs_z
@@ -705,37 +711,65 @@ class ProprioceptiveModel(RepresentationModel):
                     observations['pixel'][:, i:i+3])
         loss = 0
         # Compare next_latent with curr_latent
-        obs_z, vel_hat, home_hat, exte_feats = self.encoder(observations)
-        obs_z1_hat = self.decoder(obs_z, actions)
-        obs_z1, _, _, _ = self.encoder_target(next_observations)
-        transition = info_nce_loss(obs_z1, obs_z1_hat)
+        obs_z = self.encoder(observations)
+        obs_z_trans, (acc_hat, home_hat, pose_hat) = self.decoder(obs_z, actions)
+        obs_z1_hat = self.encoder.forward_projection(obs_z_trans)
+        obs_z1 = self.encoder_target(next_observations)
+        obs_z1_curl = self.encoder_target.forward_projection(obs_z1)
+        transition = info_nce_loss(obs_z1_curl, obs_z1_hat)
         loss += transition
 
         # split observation in proprioceptive an exteroceptive
         proprio, extero = self.encoder.split_observation(observations)
-        # linear velocities + yaw rate inference
-        vel = th.cat((extero[:, 3:6], proprio[:, 5:6]), dim=1)
-        vel_loss = F.huber_loss(vel, vel_hat)
-        loss += vel_loss * 1e-4
-        self.log("rep_vel_loss", vel_loss.item())
+        proprio_t1, extero_t1 = self.encoder.split_observation(next_observations)
+        # linear accelerations
+        # acce = th.cat((extero[:, 3:6], proprio[:, 5:6]), dim=1)
+        acc = extero_t1[:, 6:9] - extero[:, 6:9]
+        # normalize accelerations values
+        acc_hat = F.normalize(acc_hat, p=2, dim=1)
+        acc = F.normalize(acc, p=2, dim=1)
+        # acc_loss = F.huber_loss(acc, acc_hat)
+        acc_loss = F.mse_loss(acc, acc_hat)
+        loss += acc_loss * 1e-4
+        self.log("rep_acc_loss", acc_loss.item())
 
-        # Pose distance to home inference
-        distance = extero[:, :3] - self.home_pos
-        home_ori = dist2orientation(distance)#.unsqueeze(1)
+        # distance difference to home inference
+        distance_t = extero[:, :3] - self.home_pos
+        distance_t1 = extero_t1[:, :3] - self.home_pos
+        delta_dist = (th.linalg.norm(distance_t1, dim=1, keepdims=True)
+                      - th.linalg.norm(distance_t, dim=1, keepdims=True))
+        delta_high = (distance_t1[:, -1] - distance_t[:, -1]).unsqueeze(1)
+        orientation = dist2orientation(distance_t)
+        orientation_t1 = dist2orientation(distance_t1)
         _pi = round(th.pi, 6)
-        delta_theta = (home_ori - proprio[:, 2] + _pi) % (2 * _pi) - _pi
-        orientation = th.round(delta_theta, decimals=6).unsqueeze(1)
-        elevation = distance[:, -1].unsqueeze(1)
-        distance = th.linalg.norm(distance, dim=1, keepdims=True)
-        home = th.cat((distance, orientation, elevation), dim=1)
-        home_loss = F.huber_loss(home, home_hat)
+        delta_theta = (orientation_t1 - orientation + _pi) % (2 * _pi) - _pi
+        delta_theta = th.round(delta_theta, decimals=6).unsqueeze(1)
+        home = th.cat((delta_dist, delta_high, delta_theta), dim=1)
+        # home_loss = F.huber_loss(home, home_hat)
+        home_loss = F.mse_loss(home, home_hat)
         loss += home_loss * 1e-5
         self.log("rep_home_loss", home_loss.item())
 
         if self.is_multimodal:
-            l2_pixel = latent_l2_loss(exte_feats[:, -50:])
-            loss += l2_pixel * self.decoder_lambda
-            self.log("l2_pixel_loss", l2_pixel.item())
+            # pose difference inference
+            # linear_vel = extero_t1[:, :3] - extero[:, :3]
+            # angular_vel = proprio_t1[:, :3] - proprio[:, :3]
+            orientation = self.encoder.forward_quaternion(proprio_t1[:, :3])
+            position = extero_t1[:, :3]
+            # pose = th.cat((linear_velocities, angular_velocities), dim=1)            
+            position_hat, orientation_hat = pose_hat[:, :3], pose_hat[:, -4:]
+            # normalize orientation values
+            orientation_hat = F.normalize(orientation_hat, p=2, dim=1)
+            orientation = F.normalize(orientation, p=2, dim=1)
+            # mse loss
+            position_loss = F.mse_loss(position, position_hat)
+            orientation_loss = F.mse_loss(orientation, orientation_hat)
+            pose_loss = position_loss + orientation_loss
+            # pose_loss = F.mse_loss(pose, pose_hat)
+            loss += pose_loss * self.decoder_lambda
+            self.log("rep_pose_position", position_loss.item())
+            self.log("rep_pose_orientation", orientation_loss.item())
+            self.log("rep_pose_loss", pose_loss.item())
 
         self.log("rep_loss", loss.item())
         return loss  # *2.

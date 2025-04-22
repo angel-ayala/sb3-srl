@@ -519,7 +519,7 @@ class NatureCNN(nn.Module):
         return self.fc_feats(feats)
 
     def forward(self, observations: th.Tensor, detach: bool = False) -> th.Tensor:
-        feats = self.forward_feats(observations)
+        feats = F.leaky_relu(self.forward_feats(observations))
         if detach:
             feats = feats.deatch()
         return self.forward_z(feats)
@@ -530,29 +530,34 @@ class ProprioceptiveEncoder(nn.Module):
                  vector_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256],
-                 pixel_shape: Optional[tuple] = None):
+                 pixel_shape: Optional[tuple] = None,
+                 pixel_dim: Optional[int] = None):
         assert vector_shape[-1] == 22, "Observation state insufficient length, (IMU, Gyro, GPS, Vel, TargetSensors, Motors)"
         super(ProprioceptiveEncoder, self).__init__()
-        self.feature_dim = 0
-        proprio_input = 10 # = 3 imu + 3 gyro + 4 motors
+        proprio_input = 10  # = 3 imu + 3 gyro + 4 motors
         extero_input = 22 - proprio_input
         home_input = latent_dim
+        self.pixel_dim = pixel_dim
+        self.feature_dim = 0
 
-        if pixel_shape is not None:
-            self.pixel = NatureCNN(pixel_shape, features_dim=512, output_dim=50)
-            self.feature_dim += 50
-            # extero_input += self.pixel.features_dim
-            home_input += 50
-
+        # Proprioceptive observation
         self.proprio = VectorEncoder((proprio_input, ), latent_dim, layers_dim)
+        self.feature_dim += self.proprio.feature_dim
+        # Exteroceptive observation
         self.extero = VectorEncoder((extero_input, ), latent_dim, layers_dim)
-        self.feature_dim += self.proprio.feature_dim + self.extero.feature_dim
+        self.feature_dim += self.extero.feature_dim
+        # Pixel-based observation
+        is_pixel = pixel_shape is not None
+        if is_pixel:
+            if self.pixel_dim is None:
+                self.pixel_dim = latent_dim
+            self.pixel = NatureCNN(pixel_shape, features_dim=512, output_dim=self.pixel_dim)  # 50)
+            self.feature_dim += self.pixel_dim
 
-        layers = create_mlp(latent_dim, 4, layers_dim, nn.LeakyReLU, False, True)
-        self.vel_proj = nn.Sequential(*layers)
-
-        layers = create_mlp(home_input, 3, layers_dim, nn.LeakyReLU, False, True)
-        self.home_proj = nn.Sequential(*layers)
+        # Latent projection
+        proj_layers = create_mlp(self.feature_dim, self.feature_dim,
+                                 layers_dim, nn.LeakyReLU, True, True)
+        self.latent_proj = nn.Sequential(*proj_layers)
 
     def prop_observation(self, observation):
         if isinstance(observation, dict):
@@ -574,29 +579,81 @@ class ProprioceptiveEncoder(nn.Module):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
         return self.prop_observation(observation), self.exte_observation(observation)
 
-    def forward_z(self, prop_feat, exte_feats):
-        z_prop = self.proprio.forward_z(prop_feat)
-        z_exte = self.extero.forward_z(exte_feats)
-        return z_prop, z_exte
+    def forward_projection(self, z_stack):
+        return self.latent_proj(z_stack)
+    
+    def forward_quaternion(self, euler):
+        return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
 
     def forward(self, obs, detach=False):
         # forward features
-        prop_obs = self.prop_observation(obs)
-        # exte_obs = self.forward_exte_obs(obs)
-        exte_obs = self.exte_observation(obs)
-        prop_feat = self.proprio.forward_feats(prop_obs)
-        exte_feats = self.extero.forward_feats(exte_obs)
-        # forward latent vector
-        prop_z, exte_z = self.forward_z(prop_feat, exte_feats)
-        z_stack = th.cat((prop_z, exte_z), dim=1)
-        # forward pixel observation
+        obs_prop = self.prop_observation(obs)
+        obs_exte = self.exte_observation(obs)
+        z_proprio = self.proprio(obs_prop, detach)
+        z_extero = self.extero(obs_exte, detach)
+        z_stack = th.cat((z_proprio, z_extero), dim=1)
         if hasattr(self, 'pixel'):
-            pixel_feats = self.pixel.forward_feats(obs['pixel'])
-            z_pixel = self.pixel.forward_z(pixel_feats)
+            z_pixel = self.pixel(obs['pixel'], detach)
             z_stack = th.cat((z_stack, z_pixel), dim=1)
-            exte_feats = th.cat((exte_feats, pixel_feats), dim=1)
-        # forward body velocities projection
-        vel_out = self.vel_proj(prop_feat)
-        # forward home distance projection
-        home_out = self.home_proj(exte_feats)
-        return z_stack, vel_out, home_out, exte_feats
+
+        return z_stack
+
+
+class GuidedSPRDecoder(nn.Module):
+    """SimpleSPRDecoder as representation learning function."""
+    def __init__(self,
+                 action_shape: tuple,
+                 latent_dim: int,
+                 layers_dim: List[int] = [256],
+                 pixel_dim: Optional[int] = None):
+        super(GuidedSPRDecoder, self).__init__()
+        self.latent_dim = latent_dim
+        self.pixel_dim = pixel_dim
+        # Proprioceptive transition
+        proprio_layers = create_mlp(latent_dim + action_shape[-1], latent_dim,
+                                    layers_dim, nn.LeakyReLU, True, True)
+        proprio_layers.insert(-1, nn.LayerNorm(latent_dim))
+        self.proprio_trans = nn.Sequential(*proprio_layers)
+        # Exteroceptive transition
+        extero_layers = create_mlp(latent_dim + action_shape[-1], latent_dim,
+                                   layers_dim, nn.LeakyReLU, True, True)
+        extero_layers.insert(-1, nn.LayerNorm(latent_dim))
+        self.extero_trans = nn.Sequential(*extero_layers)
+        # Pixel transition
+        if pixel_dim is not None:
+            pixel_layers = create_mlp(pixel_dim + action_shape[-1], pixel_dim,
+                                      layers_dim, nn.LeakyReLU, True, True)
+            pixel_layers.insert(-1, nn.LayerNorm(pixel_dim))
+            self.pixel_trans = nn.Sequential(*pixel_layers)
+        # Linear acceleration belief
+        layers = create_mlp(latent_dim, 3,
+                            layers_dim, nn.LeakyReLU, False, True)
+        self.accel_proj = nn.Sequential(*layers)
+        # Home distance, orientation, and elevation diff belief
+        layers = create_mlp(latent_dim, 3,
+                            layers_dim, nn.LeakyReLU, False, True)
+        self.home_proj = nn.Sequential(*layers)
+        # UAV pose belief
+        if pixel_dim is not None:
+            layers = create_mlp(pixel_dim, 7,
+                                layers_dim, nn.LeakyReLU, False, True)
+            self.pose_proj = nn.Sequential(*layers)
+
+    def forward(self, z_stack, action):
+        # expects z_stack with shape (B, proprio_dim+extero_dim(+pixel_dim)*)
+        z_proprio, z_extero = z_stack[:, :self.latent_dim * 2].chunk(2, dim=1)
+        # next latent inference
+        z1_proprio_hat = self.proprio_trans(th.cat([z_proprio, action], dim=1))
+        z1_extero_hat = self.extero_trans(th.cat([z_extero, action], dim=1))
+        z1_hat = th.cat([z1_proprio_hat, z1_extero_hat], dim=1)
+        if self.pixel_dim is not None:
+            z_pixel = z_stack[:, -self.pixel_dim:]
+            z1_pixel_hat = self.pixel_trans(th.cat([z_pixel, action], dim=1))
+            z1_hat = th.cat([z1_hat, z1_pixel_hat], dim=1)
+            pose = self.pose_proj(z1_pixel_hat)  # pose inference
+        else:
+            pose = None
+        # values inference
+        accel = self.accel_proj(z1_proprio_hat)
+        home = self.home_proj(z1_proprio_hat)
+        return z1_hat, (accel, home, pose)

@@ -340,6 +340,8 @@ def args2logpath(args, algo):
         path_suffix += '-i2spr'
     if args.model_ispr_mumo:
         path_suffix += '-ispr-custom'
+    if args.model_proprio:
+        path_suffix += '-proprio'
     # extra labels
     if args.introspection_lambda != 0.:
         path_suffix += '-intr'
@@ -541,9 +543,15 @@ def iterate_agents_evaluation(env, algorithm, args):
         print('Loading', agent_path)
         model = algorithm.load(agent_path)
         def action_selection(observations):
-            observations = np.array(observations, dtype=np.float32)
-            if observations.shape[0] != 1.:
-                observations = observations[np.newaxis, ...]
+            if type(observations) is dict:
+                for k in observations.keys():
+                    observations[k] = np.array(observations[k], dtype=np.float32)
+                    if observations[k].shape[0] != 1:
+                        observations[k] = observations[k][np.newaxis, ...]
+            else:
+                observations = np.array(observations, dtype=np.float32)
+                if observations.shape[0] != 1:
+                    observations = observations[np.newaxis, ...]
             actions, states = model.predict(
                 observations,  # type: ignore[arg-type]
                 state=None,
@@ -562,9 +570,9 @@ def iterate_agents_evaluation(env, algorithm, args):
                                       reset_keywords=['target_pos'])
         monitor_env.init_store()
         monitor_env.set_eval()
+        monitor_env.new_episode(log_ep)
         # Iterate over goal position
         for tpos in targets_pos:
-            monitor_env.new_episode(log_ep)
             evaluate_agent(action_selection, monitor_env, args.eval_episodes,
                            args.eval_steps, tpos)
         monitor_env.close()
