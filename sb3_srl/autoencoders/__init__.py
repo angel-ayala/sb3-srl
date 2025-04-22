@@ -11,7 +11,6 @@ from .models import ReconstructionDistModel
 from .models import SelfPredictiveModel
 from .models import InfoSPRModel
 from .models import IntrospectiveInfoSPR
-from .models import MuMoAESPRModel
 from .models import ProprioceptiveModel
 
 

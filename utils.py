@@ -305,8 +305,6 @@ def args2ae_config(args, env_params):
         model_name = 'InfoSPR'
     elif _args.get('model_i2spr', False):
         model_name = 'IntrospectiveInfoSPR'
-    elif _args.get('model_ispr_mumo', False):
-        model_name = 'MuMoAESPR'
     elif _args.get('model_proprio', False):
         model_name = 'Proprioceptive'
     else:

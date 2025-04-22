@@ -173,7 +173,6 @@ class SPRDecoder(nn.Module):
 
     def transition(self, z, action):
         h_fc = self.code(th.cat([z, action], dim=1))
-        h_fc = renormalize(th.relu(h_fc), 1)
         return th.tanh(h_fc)
 
     def predict(self, z_prj):
@@ -322,160 +321,6 @@ class SimpleMuMoEncoder(nn.Module):
             feats['vector'] = feats['vector'].detach()
             feats['pixel'] = feats['pixel'].detach()
         return self.forward_z(feats)
-
-
-class MixMuMoEncoder(nn.Module):
-    def __init__(self, vector_encoder: nn.Module,
-                 pixel_encoder: nn.Module,
-                 hidden_dim: int = 256):
-        super(MixMuMoEncoder, self).__init__()
-        latent_dim = vector_encoder.feature_dim
-        self.feature_dim = latent_dim
-        self.vector = vector_encoder
-        self.pixel = pixel_encoder
-        self.pixel.head = nn.Sequential(
-            nn.Linear(latent_dim * 2, hidden_dim),
-            nn.Dropout(.25),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, latent_dim),
-            nn.LayerNorm(latent_dim))
-
-    def forward_z(self, obs, detach=False):
-        z_1 = self.vector.forward_linear(obs['vector'])
-        z_2 = self.pixel.forward_conv(obs['pixel'])
-        if detach:
-            z_1 = z_1.detach()
-            z_2 = z_2.detach()
-        return z_1, z_2
-
-    def forward_z_prj(self, obs, detach=False):
-        z_1, z_2 = self.forward_z(obs, detach)
-        z_1 = self.vector.fc(z_1)
-        z_2 = self.pixel.fc(z_2.view(z_2.size(0), -1))
-        return z_1, z_2
-
-    def forward(self, obs, detach=False):
-        z_1, z_2 = self.forward_z_prj(obs, detach)
-        z_h = self.pixel.head(th.cat((z_1, z_2), dim=1))
-        return {'vector': th.tanh(z_h)}
-
-
-class Pixel2Pose(nn.Module):
-    def __init__(self, state_shape: tuple,
-                 latent_dim: int,
-                 layers_dim: List[int] = [256],
-                 layers_filter: List[int] = [32, 32]):
-        super(Pixel2Pose, self).__init__()
-        self.encoder = PixelEncoder(state_shape, latent_dim, layers_filter)
-        self.encoder.convs.append(nn.Conv2d(layers_filter[-1], latent_dim, 3, stride=1))
-        self.encoder.avg_pool = nn.AdaptiveAvgPool2d(1)
-
-        self.feature_dim = self.encoder.feature_dim
-        self.pose_decoder = nn.Sequential(
-            nn.Linear(latent_dim, layers_dim[-1]),
-            nn.LeakyReLU(),
-            nn.Linear(layers_dim[-1], 7))
-
-    def forward(self, observations):
-        return self.encoder(observations)
-
-    def forward_pose(self, observations):
-        # pose = observations['vector'][..., :12]
-        # vector_obs = observations['vector']
-        pose_q = matrix_to_quaternion(
-            euler_angles_to_matrix(observations['vector'][:, :3], convention='XYZ'))
-        pose = th.cat((observations['vector'][:, 6:9], pose_q), dim=1)
-        z = self.encoder.forward_conv(observations['pixel'])
-        # z = self.encoder.fc(z.view(z.size(0), -1))
-        z = self.encoder.avg_pool(z).squeeze()
-        pose_hat = self.pose_decoder(z)
-        return pose_hat, pose
-
-    def loss(self, pose_hat, pose, beta=150):
-        position = pose_hat[:, :3]
-        orientation = pose_hat[:, -4:]
-        position_target = pose[:, :3]
-        orientation_target = pose[:, -4:]
-
-        orientation = F.normalize(orientation, p=2, dim=1)
-        orientation_target = F.normalize(orientation_target, p=2, dim=1)
-        position_loss = F.mse_loss(position_target, position)
-        orientation_loss = F.mse_loss(orientation_target, orientation)
-
-        loss = position_loss + beta * orientation_loss
-        return loss
-
-class MuMoSPRDecoder(nn.Module):
-    def __init__(self, action_shape: tuple,
-                 latent_dim: int,
-                 layers_dim: List[int] = [256],
-                 layers_filter: List[int] = [32, 32]):
-        super(MuMoSPRDecoder, self).__init__()
-        self.pixel = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
-        self.pixel.pose_feats = nn.Sequential(
-            nn.Conv2d(layers_filter[-1], latent_dim, 3, stride=1),
-            nn.AdaptiveAvgPool2d(1))
-        self.pixel.pose_head = nn.Sequential(
-            nn.Linear(latent_dim, layers_dim[-1]),
-            nn.LeakyReLU(),
-            nn.Linear(layers_dim[-1], 7))
-
-        self.vector = SimpleSPRDecoder(action_shape, latent_dim, layers_dim)
-        # self.vector.action_infer = nn.Sequential(
-        #         nn.Linear(latent_dim, layers_dim[-1]),
-        #         nn.LeakyReLU(),
-        #         nn.Linear(layers_dim[-1], int(np.prod(action_shape) * 2 + 1)),
-        #         nn.Sigmoid())
-        self.vector.query = nn.Linear(latent_dim, latent_dim)
-        # self.vector.query = nn.Sequential(
-        #         nn.Linear(latent_dim, layers_dim[-1]),
-        #         nn.LeakyReLU(),
-        #         nn.Linear(layers_dim[-1], int(np.prod(action_shape) * 2 + 1)),
-        #         nn.Sigmoid())
-        self.vector.key = nn.Linear(latent_dim, latent_dim)
-        # self.vector.key = nn.Sequential(
-        #         nn.Linear(latent_dim, layers_dim[-1]),
-        #         nn.LeakyReLU(),
-        #         nn.Linear(layers_dim[-1], int(np.prod(action_shape) * 2 + 1)),
-        #         nn.Sigmoid())
-        self.vector.value = nn.Linear(latent_dim, latent_dim)
-
-    def forward_pose(self, observations):
-        # pose = observations['vector'][..., :12]
-        # vector_obs = observations['vector']
-        pose_q = matrix_to_quaternion(
-            euler_angles_to_matrix(observations['vector'][:, :3], convention='XYZ'))
-        pose = th.cat((observations['vector'][:, 6:9], pose_q), dim=1)
-        z = self.pixel.pose_feats(observations['pixel']).squeeze()
-        pose_hat = self.pixel.pose_head(z)
-        return pose_hat, pose
-
-    def pose_loss(self, pose_hat, pose, beta=150):
-        position = pose_hat[:, :3]
-        orientation = pose_hat[:, -4:]
-        position_target = pose[:, :3]
-        orientation_target = pose[:, -4:]
-
-        orientation = F.normalize(orientation, p=2, dim=1)
-        orientation_target = F.normalize(orientation_target, p=2, dim=1)
-        position_loss = F.mse_loss(position_target, position)
-        orientation_loss = F.mse_loss(orientation_target, orientation)
-
-        loss = position_loss + beta * orientation_loss
-        return loss
-
-    def forward(self, obs, action):
-        return {'vector': self.vector(obs['vector'], action),
-                'pixel': self.pixel(obs['pixel'], action)}
-
-    def forward_attn(self, observations, alpha=0.75, beta=0.25):
-        # https://www.mdpi.com/2076-3417/10/17/5902
-        query = self.vector.query(observations['pixel'])
-        key = self.vector.key(observations['vector'])
-        value = self.vector.value(observations['pixel'])
-        qk = query.squeeze(0) @ key.T
-        out = alpha * qk @ value + beta * observations['pixel']
-        return out
 
 
 class NatureCNN(nn.Module):
@@ -655,5 +500,5 @@ class GuidedSPRDecoder(nn.Module):
             pose = None
         # values inference
         accel = self.accel_proj(z1_proprio_hat)
-        home = self.home_proj(z1_proprio_hat)
+        home = self.home_proj(z1_extero_hat)
         return z1_hat, (accel, home, pose)
