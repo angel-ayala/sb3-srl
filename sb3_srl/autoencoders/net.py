@@ -193,12 +193,12 @@ class SimpleSPRDecoder(nn.Module):
         super(SimpleSPRDecoder, self).__init__()
         code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
         code_layers.insert(-1, nn.LayerNorm(latent_dim))
-        self.code = nn.Sequential(*code_layers)
+        self.transition = nn.Sequential(*code_layers)
         proj_layers = create_mlp(latent_dim, latent_dim, layers_dim, nn.LeakyReLU, True, True)
         self.projection = nn.Sequential(*proj_layers)
 
     def forward_z_hat(self, z, action):
-        return self.code(th.cat([z, action], dim=1))
+        return self.transition(th.cat([z, action], dim=1))
 
     def forward_proj(self, code):
         return self.projection(code)
@@ -399,10 +399,6 @@ class ProprioceptiveEncoder(nn.Module):
             self.pixel = NatureCNN(pixel_shape, features_dim=512, output_dim=self.pixel_dim)  # 50)
             self.feature_dim += self.pixel_dim
 
-        # Latent projection
-        proj_layers = create_mlp(self.feature_dim, self.feature_dim,
-                                 layers_dim, nn.LeakyReLU, True, True)
-        self.latent_proj = nn.Sequential(*proj_layers)
 
     def prop_observation(self, observation):
         if isinstance(observation, dict):
@@ -424,8 +420,6 @@ class ProprioceptiveEncoder(nn.Module):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
         return self.prop_observation(observation), self.exte_observation(observation)
 
-    def forward_projection(self, z_stack):
-        return self.latent_proj(z_stack)
     
     def forward_quaternion(self, euler):
         return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
@@ -444,32 +438,17 @@ class ProprioceptiveEncoder(nn.Module):
         return z_stack
 
 
-class GuidedSPRDecoder(nn.Module):
+class GuidedSPRDecoder(SimpleSPRDecoder):
     """SimpleSPRDecoder as representation learning function."""
     def __init__(self,
                  action_shape: tuple,
                  latent_dim: int,
+                 feature_dim: int,
                  layers_dim: List[int] = [256],
                  pixel_dim: Optional[int] = None):
-        super(GuidedSPRDecoder, self).__init__()
+        super(GuidedSPRDecoder, self).__init__(action_shape, feature_dim, layers_dim)
         self.latent_dim = latent_dim
         self.pixel_dim = pixel_dim
-        # Proprioceptive transition
-        proprio_layers = create_mlp(latent_dim + action_shape[-1], latent_dim,
-                                    layers_dim, nn.LeakyReLU, True, True)
-        proprio_layers.insert(-1, nn.LayerNorm(latent_dim))
-        self.proprio_trans = nn.Sequential(*proprio_layers)
-        # Exteroceptive transition
-        extero_layers = create_mlp(latent_dim + action_shape[-1], latent_dim,
-                                   layers_dim, nn.LeakyReLU, True, True)
-        extero_layers.insert(-1, nn.LayerNorm(latent_dim))
-        self.extero_trans = nn.Sequential(*extero_layers)
-        # Pixel transition
-        if pixel_dim is not None:
-            pixel_layers = create_mlp(pixel_dim + action_shape[-1], pixel_dim,
-                                      layers_dim, nn.LeakyReLU, True, True)
-            pixel_layers.insert(-1, nn.LayerNorm(pixel_dim))
-            self.pixel_trans = nn.Sequential(*pixel_layers)
         # Linear acceleration belief
         layers = create_mlp(latent_dim, 3,
                             layers_dim, nn.LeakyReLU, False, True)
@@ -484,21 +463,17 @@ class GuidedSPRDecoder(nn.Module):
                                 layers_dim, nn.LeakyReLU, False, True)
             self.pose_proj = nn.Sequential(*layers)
 
-    def forward(self, z_stack, action):
+    def forward(self, z, action):
+        # forward transition
+        z1_hat = self.forward_z_hat(z, action)
+        # forward aux projections
         # expects z_stack with shape (B, proprio_dim+extero_dim(+pixel_dim)*)
-        z_proprio, z_extero = z_stack[:, :self.latent_dim * 2].chunk(2, dim=1)
-        # next latent inference
-        z1_proprio_hat = self.proprio_trans(th.cat([z_proprio, action], dim=1))
-        z1_extero_hat = self.extero_trans(th.cat([z_extero, action], dim=1))
-        z1_hat = th.cat([z1_proprio_hat, z1_extero_hat], dim=1)
-        if self.pixel_dim is not None:
-            z_pixel = z_stack[:, -self.pixel_dim:]
-            z1_pixel_hat = self.pixel_trans(th.cat([z_pixel, action], dim=1))
-            z1_hat = th.cat([z1_hat, z1_pixel_hat], dim=1)
-            pose = self.pose_proj(z1_pixel_hat)  # pose inference
-        else:
-            pose = None
-        # values inference
+        z1_proprio_hat, z1_extero_hat = z1_hat[:, :self.latent_dim * 2].chunk(2, dim=1)# values inference
         accel = self.accel_proj(z1_proprio_hat)
         home = self.home_proj(z1_extero_hat)
+        pose = None
+        if self.pixel_dim is not None:
+            pose = self.pose_proj(z1_hat[:, -self.pixel_dim:])  # pose inference
+        # forward latent projection
+        z1_hat = self.forward_proj(z1_hat)
         return z1_hat, (accel, home, pose)

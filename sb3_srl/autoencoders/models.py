@@ -525,19 +525,32 @@ class ProprioceptiveModel(RepresentationModel):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
+        dec_args['feature_dim'] = self.encoder.feature_dim
         if self.is_multimodal:
             dec_args['pixel_dim'] = self.encoder.pixel_dim
         self.decoder = GuidedSPRDecoder(**dec_args)
 
-    def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
+    def dec_optimizer(self, decoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
-            self.encoder_optim = optim_class(self.encoder.parameters(),
-                                             lr=encoder_lr, **optim_kwargs)
-    def encoder_optim_zero_grad(self):
-        self.encoder_optim.zero_grad()
+        contrastive_parameters = (list(self.decoder.transition.parameters()) +
+                                  list(self.decoder.projection.parameters()))
+        self.decoder_optim = optim_class(contrastive_parameters,
+                                         lr=decoder_lr, **optim_kwargs)
 
-    def encoder_optim_step(self):
-        self.encoder_optim.step()
+        aux_parameters = (list(self.decoder.accel_proj.parameters()) +
+                          list(self.decoder.home_proj.parameters()))
+        if self.is_multimodal:
+               aux_parameters += list(self.decoder.pose_proj.parameters())
+        self.dec_proj_optim = optim_class(aux_parameters,
+                                         lr=decoder_lr, **optim_kwargs)
+
+    def decoder_optim_zero_grad(self):
+        self.decoder_optim.zero_grad()
+        self.dec_proj_optim.zero_grad()
+
+    def decoder_optim_step(self):
+        self.decoder_optim.step()
+        self.dec_proj_optim.step()
 
     def forward_z(self, observation, detach=False):
         obs_z = self.encoder(observation, detach=detach)
@@ -564,11 +577,9 @@ class ProprioceptiveModel(RepresentationModel):
         loss = 0
         # Compare next_latent with curr_latent
         obs_z = self.encoder(observations)
-        obs_z_trans, (acc_hat, home_hat, pose_hat) = self.decoder(obs_z, actions)
-        obs_z1_hat = self.encoder.forward_projection(obs_z_trans)
+        obs_z1_hat, (acc_hat, home_hat, pose_hat) = self.decoder(obs_z, actions)
         obs_z1 = self.encoder_target(next_observations)
-        obs_z1_curl = self.encoder_target.forward_projection(obs_z1)
-        transition = info_nce_loss(obs_z1_curl, obs_z1_hat)
+        transition = info_nce_loss(obs_z1, obs_z1_hat)
         loss += transition
 
         # split observation in proprioceptive an exteroceptive
