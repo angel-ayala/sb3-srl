@@ -69,6 +69,7 @@ class RepresentationModel:
         self.decoder_lambda = decoder_lambda
         self.introspection_lambda = introspection_lambda
         self.encoder_only = encoder_only
+        self.device = 'cpu'
         self._setup_models()
 
     def set_logger(self, logger_function, tag_prefix=''):
@@ -146,6 +147,7 @@ class RepresentationModel:
             self.decoder.apply(function)
 
     def to(self, device):
+        self.device = device
         self.encoder.to(device)
         if self.decoder is not None:
             self.decoder.to(device)
@@ -206,12 +208,12 @@ class RepresentationModel:
             self.scaler_ok = True
 
     def preprocess(self, observations):
+        obs_out = observations.cpu()
         if self.scaler is not None:
             if not self.scaler_ok:
                 print('Warning! preprocess called without fit the scaler')
-            return self.scaler.transform(observations)
-        else:
-            return observations
+            obs_out = self.scaler.transform(obs_out)
+        return th.FloatTensor(obs_out).to(self.device)
 
     def set_stopper(self, patience, threshold=0.):
         self.stop = EarlyStopper(patience, threshold)
@@ -283,7 +285,7 @@ class ReconstructionModel(RepresentationModel):
         if self.is_pixels:
             obs = preprocess_pixel_obs(observations.float(), bits=5)
         else:
-            obs = th.FloatTensor(self.preprocess(observations.cpu()))
+            obs = self.preprocess(observations)
         return obs
 
     def compute_representation_loss(self, observations, actions, next_observations):
@@ -292,7 +294,7 @@ class ReconstructionModel(RepresentationModel):
         rec_obs = self.decoder(obs_z)
         # MSE loss reconstruction
         obs_norm = self.preprocess_reconstruction(observations)
-        rec_loss = F.mse_loss(rec_obs, obs_norm.to(rec_obs.device))
+        rec_loss = F.mse_loss(rec_obs, obs_norm)
         self.update_stopper(rec_loss)
         # add L2 penalty on latent representation
         latent_loss = latent_l2_loss(obs_z)
@@ -499,6 +501,15 @@ class ProprioceptiveModel(RepresentationModel):
         super(ProprioceptiveModel, self).__init__('Proprioception', *args, **kwargs)
         assert not self.is_pixels or self.is_multimodal, "ProprioceptionModel is not Pixel-based ready."
         self.home_pos = th.FloatTensor([0., 0., 0.3])
+        self.set_scaler((-1, 1))
+
+    def fit_observation(self, observation_space):
+        obs_space = observation_space['vector'] if self.is_multimodal else observation_space
+        super().fit_observation(obs_space)
+
+    def preprocess(self, observations):
+        obs = observations['vector'] if self.is_multimodal else observations
+        return super().preprocess(obs)
 
     def _setup_encoder(self):
         state_shape = self.args['state_shape']
@@ -514,7 +525,8 @@ class ProprioceptiveModel(RepresentationModel):
             layers_dim=self.args['layers_dim'],
             pixel_shape=pixel_shape,
             pixel_dim=pixel_dim)
-    
+        print(self.encoder)
+
     def to(self, device):
         super().to(device)
         self.home_pos = self.home_pos.to(device)
@@ -529,6 +541,7 @@ class ProprioceptiveModel(RepresentationModel):
         if self.is_multimodal:
             dec_args['pixel_dim'] = self.encoder.pixel_dim
         self.decoder = GuidedSPRDecoder(**dec_args)
+        print(self.decoder)
 
     def dec_optimizer(self, decoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
@@ -584,13 +597,15 @@ class ProprioceptiveModel(RepresentationModel):
 
         # split observation in proprioceptive an exteroceptive
         proprio, extero = self.encoder.split_observation(observations)
+        _, extero_norm = self.encoder.split_observation(self.preprocess(observations))
         proprio_t1, extero_t1 = self.encoder.split_observation(next_observations)
+        proprio_t1_norm, extero_t1_norm = self.encoder.split_observation(self.preprocess(next_observations))
         # linear accelerations
         # acce = th.cat((extero[:, 3:6], proprio[:, 5:6]), dim=1)
-        acc = extero_t1[:, 6:9] - extero[:, 6:9]
+        acc = extero_t1_norm[:, 6:9] - extero_norm[:, 6:9]
         # normalize accelerations values
-        # acc_hat = F.normalize(acc_hat, p=2, dim=1)
-        # acc = F.normalize(acc, p=2, dim=1)
+        acc_hat = F.normalize(acc_hat, p=2, dim=1)
+        acc = F.normalize(acc, p=2, dim=1)
         # acc_loss = F.huber_loss(acc, acc_hat)
         acc_loss = F.mse_loss(acc, acc_hat)
         loss += acc_loss * 1e-4
@@ -606,20 +621,21 @@ class ProprioceptiveModel(RepresentationModel):
         orientation_t1 = dist2orientation(distance_t1)
         _pi = round(th.pi, 6)
         delta_theta = (orientation_t1 - orientation + _pi) % (2 * _pi) - _pi
-        delta_theta = th.round(delta_theta, decimals=6).unsqueeze(1)
-        home = th.cat((delta_dist, delta_high, delta_theta), dim=1)
+        # delta_theta = th.round(delta_theta, decimals=6)#.unsqueeze(1)
+        # home = th.cat((delta_dist, delta_high, delta_theta), dim=1)
+        home = th.cat((delta_dist, delta_high), dim=1)
         # home_loss = F.huber_loss(home, home_hat)
-        home_loss = F.mse_loss(home, home_hat)
+        home_distance = F.mse_loss(home, home_hat[:, :-1])
+        home_orientation = F.mse_loss(delta_theta, home_hat[:, -1])
+        # home_loss = F.mse_loss(home, home_hat)
+        home_loss = home_distance + home_orientation
         loss += home_loss * 1e-5
         self.log("rep_home_loss", home_loss.item())
 
         if self.is_multimodal:
-            # pose difference inference
-            # linear_vel = extero_t1[:, :3] - extero[:, :3]
-            # angular_vel = proprio_t1[:, :3] - proprio[:, :3]
+            # pose inference
+            position = extero_t1_norm[:, :3]
             orientation = self.encoder.forward_quaternion(proprio_t1[:, :3])
-            position = extero_t1[:, :3]
-            # pose = th.cat((linear_velocities, angular_velocities), dim=1)
             position_hat, orientation_hat = pose_hat[:, :3], pose_hat[:, -4:]
             # normalize orientation values
             orientation_hat = F.normalize(orientation_hat, p=2, dim=1)
@@ -628,7 +644,6 @@ class ProprioceptiveModel(RepresentationModel):
             position_loss = F.mse_loss(position, position_hat)
             orientation_loss = F.mse_loss(orientation, orientation_hat)
             pose_loss = position_loss + orientation_loss
-            # pose_loss = F.mse_loss(pose, pose_hat)
             loss += pose_loss * self.decoder_lambda
             self.log("rep_pose_position", position_loss.item())
             self.log("rep_pose_orientation", orientation_loss.item())
