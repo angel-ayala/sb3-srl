@@ -39,12 +39,12 @@ class SRLTD3Policy(TD3Policy, SRLPolicy):
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
-        actor_kwargs["features_dim"] = self.features_dim
+        actor_kwargs["features_dim"] = self.latent_dim
         return Actor(**actor_kwargs).to(self.device)
 
     def make_critic(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> ContinuousCritic:
         critic_kwargs = self._update_features_extractor(self.critic_kwargs, features_extractor)
-        critic_kwargs["features_dim"] = self.features_dim
+        critic_kwargs["features_dim"] = self.latent_dim
         return ContinuousCritic(**critic_kwargs).to(self.device)
 
     def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:

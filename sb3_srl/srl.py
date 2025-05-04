@@ -23,8 +23,8 @@ class SRLPolicy:
         return self.rep_model.is_multimodal
 
     @property
-    def features_dim(self):
-        return self.rep_model.encoder.feature_dim #ae_params['latent_dim'] #+ ae_params['latent_dim'] * ae_params['is_multimodal']
+    def latent_dim(self):
+        return self.rep_model.encoder.latent_dim #ae_params['latent_dim'] #+ ae_params['latent_dim'] * ae_params['is_multimodal']
 
     def _build(self, lr_schedule=None):
         ae_type, ae_params = self.ae_config
@@ -35,11 +35,11 @@ class SRLPolicy:
         self.rep_model.fit_observation(self.observation_space)
 
     def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
-        # Note: the deterministic deterministic parameter is ignored in the case of TD3.
+        # Note: the deterministic parameter is ignored in the case of TD3.
         #   Predictions are always deterministic.
         with th.no_grad():
-            obs_z = self.rep_model.forward_z(observation)
-        return self.actor(obs_z)
+            obs_z = self.rep_model.forward_z(observation, deterministic)
+        return self.actor._predict(obs_z, deterministic)
 
     def set_training_mode(self, mode: bool) -> None:
         self.actor.set_training_mode(mode)

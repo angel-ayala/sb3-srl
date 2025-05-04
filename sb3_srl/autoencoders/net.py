@@ -43,106 +43,56 @@ def weight_init(m):
         nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
 
 
-def renormalize(tensor, first_dim=1):
-    if first_dim < 0:
-        first_dim = len(tensor.shape) + first_dim
-    flat_tensor = tensor.view(*tensor.shape[:first_dim], -1)
-    max = th.max(flat_tensor, first_dim, keepdim=True).values
-    min = th.min(flat_tensor, first_dim, keepdim=True).values
-    flat_tensor = (flat_tensor - min)/(max - min)
-
-    return flat_tensor.view(*tensor.shape)
-
-
-class MLP(nn.Module):
-    def __init__(self, n_input, n_output, layers_dim=[256, 256]): #hidden_dim, num_layers=2):
-        super(MLP, self).__init__()
-        self.h_layers = nn.ModuleList([nn.Linear(n_input, layers_dim[0])])
-        for i in range(len(layers_dim) - 1):
-            self.h_layers.append(nn.Linear(layers_dim[i], layers_dim[i + 1]))
-        self.h_layers.append(nn.Linear(layers_dim[-1], n_output))
-        self.num_layers = len(self.h_layers)
-
-    def forward(self, obs):
-        h = obs
-        for h_layer in self.h_layers:
-            h = F.leaky_relu(h_layer(h))
-
-        return h
-
-
-class Conv1dMLP(MLP):
-    def __init__(self, input_shape, n_output, layers_dim=[256, 256]):
-        super(Conv1dMLP, self).__init__(input_shape[-1], n_output, layers_dim=layers_dim)
-        if len(input_shape) == 2:
-            self.h_layers[0] = nn.Conv1d(input_shape[0], layers_dim[0],
-                                         kernel_size=input_shape[-1])
-
-    def forward_h(self, obs):
-        h = obs
-        for hidden_layer in self.h_layers[:-1]:
-            h = F.leaky_relu(hidden_layer(h))
-            if isinstance(hidden_layer, nn.Conv1d):
-                h = h.squeeze(2)
-        return h
-
-    def forward(self, obs):
-        h = self.forward_h(obs)
-        return self.h_layers[-1](h)
-
-
-class VectorEncoder(Conv1dMLP):
+class VectorEncoder(nn.Module):
     def __init__(self,
                  state_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256]):
-        super(VectorEncoder, self).__init__(
-            state_shape, latent_dim, layers_dim=layers_dim)
-        self.feature_dim = latent_dim
-        self.fc = nn.Linear(latent_dim, latent_dim)
-        self.ln = nn.LayerNorm(self.feature_dim)
+        super(VectorEncoder, self).__init__()
+        self.latent_dim = latent_dim
+        layers = create_mlp(state_shape[-1], latent_dim, layers_dim,
+                            nn.LeakyReLU, False, True)
+        if len(state_shape) == 2:
+            layers[0] = nn.Conv1d(state_shape[0], layers_dim[0],
+                                  kernel_size=state_shape[-1])
+            layers.insert(1, nn.Flatten(start_dim=1))
+        self.feats_model = nn.Sequential(*layers)
+
+        layers = [nn.LeakyReLU(),
+                  nn.Linear(latent_dim, latent_dim),
+                  nn.LayerNorm(latent_dim),
+                  nn.Tanh()]
+        self.head_model = nn.Sequential(*layers)
 
     def forward_feats(self, obs):
-        return super().forward(obs)
+        return self.feats_model(obs)
 
     def forward_z(self, feats):
-        out = self.ln(self.fc(feats))
-        return th.tanh(out)
+        return self.head_model(feats)
 
-    def forward(self, obs, detach=False):
-        feats = F.leaky_relu(self.forward_feats(obs))
-        if detach:
-            feats = feats.detach()
+    def forward(self, obs):
+        feats = self.forward_feats(obs)
         return self.forward_z(feats)
 
-    def copy_weights_from(self, source):
-        """Tie hidden layers"""
-        # only tie hidden layers
-        for i in range(self.num_layers):
-            tie_weights(src=source.h_layers[i], trg=self.h_layers[i])
 
-
-class VectorDecoder(MLP):
+class VectorDecoder(nn.Module):
     def __init__(self,
                  state_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256]):
-        super(VectorDecoder, self).__init__(
-            latent_dim, state_shape[-1], layers_dim=layers_dim)
+        super(VectorDecoder, self).__init__()
+        layers = create_mlp(latent_dim, state_shape[-1], layers_dim,
+                            nn.LeakyReLU, False, True)
+        layers.insert(0, nn.Linear(latent_dim, latent_dim))
+
         if len(state_shape) == 2:
-            self.h_layers[-1] = nn.ConvTranspose1d(
-                layers_dim[0], state_shape[0], kernel_size=state_shape[-1])
-        self.fc = nn.Linear(latent_dim, latent_dim)
+            layers.insert(-1, nn.ConvTranspose1d(layers_dim[0], state_shape[0],
+                                                 kernel_size=state_shape[-1]))
+            layers.insert(-1, nn.Unflatten(2, (1, layers_dim[-1])))
+        self.head_model = nn.Sequential(*layers)
 
     def forward(self, z):
-        h = self.fc(z)
-        for hidden_layer in self.h_layers[:-1]:
-            h = F.leaky_relu(hidden_layer(h))
-        last_layer = self.h_layers[-1]
-        if isinstance(last_layer, nn.ConvTranspose1d):
-            h = h.unsqueeze(2)
-        out = last_layer(h)
-        return out
+        return self.head_model(z)
 
 
 class ProjectionN(nn.Module):
@@ -209,55 +159,44 @@ class SimpleSPRDecoder(nn.Module):
         return proj
 
 
-OUT_DIM = {2: 39, 4: 35, 6: 31}
-
-
 class PixelEncoder(nn.Module):
     """Convolutional encoder of pixels observations."""
+    OUT_DIM = {2: 39, 4: 35, 6: 31}
 
-    def __init__(self, state_shape: tuple,
+    def __init__(self,
+                 state_shape: tuple,
                  latent_dim: int,
                  layers_filter: List[int] = [32, 32]):
         super().__init__()
         assert len(state_shape) == 3
-        self.feature_dim = latent_dim
-        self.num_layers = len(layers_filter)
-        self.convs = nn.ModuleList(
-            [nn.Conv2d(state_shape[0], layers_filter[0], 3, stride=2)]
-        )
-        for i in range(self.num_layers - 1):
-            self.convs.append(nn.Conv2d(layers_filter[i], layers_filter[i + 1], 3, stride=1))
+        num_layers = len(layers_filter)
+        self.latent_dim = latent_dim
+        feats_layers = [nn.Conv2d(state_shape[0], layers_filter[0], 3, stride=2)]
+        for i in range(num_layers - 1):
+            feats_layers.extend([
+                nn.LeakyRelu(),
+                nn.Conv2d(layers_filter[i], layers_filter[i + 1], 3, stride=1)])
+        self.feats_model = nn.Sequential(*feats_layers)
 
-        out_dim = OUT_DIM[self.num_layers]
-        self.fc = nn.Linear(layers_filter[-1] * out_dim * out_dim, self.feature_dim)
-        self.ln = nn.LayerNorm(self.feature_dim)
+        out_dim = self.OUT_DIM[num_layers]
+        self.feature_dim = (layers_filter[-1], out_dim, out_dim)
+        head_layers = [
+            nn.LeakyRelu(),
+            nn.Linear(layers_filter[-1] * out_dim * out_dim, latent_dim),
+            nn.LayerNorm(latent_dim),
+            nn.Tanh
+            ]
+        self.head_model = nn.Sequential(*head_layers)
 
     def forward_feats(self, obs):
-        obs = obs.float() / 255.  # normalize
-        conv = F.leaky_relu(self.convs[0](obs.float()))
-        for i in range(1, self.num_layers):
-            conv = self.convs[i](conv)
-            if i + 1 < self.num_layers:
-                conv = F.leaky_relu(conv)
-        # last layer linear
-        return conv
+        return self.feats_model(obs.float() / 255.)
 
     def forward_z(self, feats):
-        feats = feats.view(feats.size(0), -1)
-        z = self.ln(self.fc(feats))
-        return th.tanh(z)
+        return self.head_model(feats.view(feats.size(0), -1))
 
-    def forward(self, obs, detach=False):
-        feats = F.leaky_relu(self.forward_feats(obs))
-        if detach:
-            feats = feats.detach()
+    def forward(self, obs):
+        feats = self.forward_feats(obs)
         return self.forward_z(feats)
-
-    def copy_weights_from(self, source):
-        """Tie convolutional layers"""
-        # only tie conv layers
-        for i in range(self.num_layers):
-            tie_weights(src=source.convs[i], trg=self.convs[i])
 
 
 class PixelDecoder(nn.Module):
@@ -267,7 +206,7 @@ class PixelDecoder(nn.Module):
         super().__init__()
         self.num_layers = len(layers_filter)
         self.num_filters = layers_filter[0]
-        self.out_dim = OUT_DIM[self.num_layers]
+        self.out_dim = PixelEncoder.OUT_DIM[self.num_layers]
 
         self.fc = nn.Linear(
             latent_dim, self.num_filters * self.out_dim * self.out_dim
@@ -337,7 +276,9 @@ class NatureCNN(nn.Module):
         super().__init__()
         # We assume CxHxW images (channels first)
         n_input_channels = pixel_shape[0]
-        self.cnn = nn.Sequential(
+        self.features_dim = features_dim
+        self.latent_dim = output_dim
+        self.feats_model = nn.Sequential(
             nn.Conv2d(n_input_channels, 32, kernel_size=8, stride=4, padding=0),
             nn.LeakyReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
@@ -345,28 +286,26 @@ class NatureCNN(nn.Module):
             nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
             nn.LeakyReLU(),
             nn.Flatten(),
+            nn.Linear(3136, features_dim)
         )
         self.normalized_image = normalized_image
-        # self.features_dim = features_dim
-        self.linear = nn.Sequential(nn.Linear(3136, features_dim),
-                                    nn.LeakyReLU(),
-                                    nn.Linear(features_dim, output_dim))
-        self.fc_feats = nn.Sequential(nn.Linear(output_dim, output_dim),
-                                      nn.LayerNorm(output_dim),
-                                      nn.Tanh())
+        self.head_model = nn.Sequential(nn.LeakyReLU(),
+                                        nn.Linear(features_dim, output_dim),
+                                        nn.LeakyReLU(),
+                                        nn.Linear(output_dim, output_dim),
+                                        nn.LayerNorm(output_dim),
+                                        nn.Tanh())
 
     def forward_feats(self, observations: th.Tensor) -> th.Tensor:
         if not self.normalized_image:
             observations = observations.float() / 255.
-        return self.linear(self.cnn(observations))
+        return self.feats_model(observations.float())
 
     def forward_z(self, feats: th.Tensor) -> th.Tensor:
-        return self.fc_feats(feats)
+        return self.head_model(feats)
 
-    def forward(self, observations: th.Tensor, detach: bool = False) -> th.Tensor:
-        feats = F.leaky_relu(self.forward_feats(observations))
-        if detach:
-            feats = feats.deatch()
+    def forward(self, observations: th.Tensor) -> th.Tensor:
+        feats = self.forward_feats(observations)
         return self.forward_z(feats)
 
 
@@ -420,19 +359,19 @@ class ProprioceptiveEncoder(nn.Module):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
         return self.prop_observation(observation), self.exte_observation(observation)
 
-    
+
     def forward_quaternion(self, euler):
         return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
 
-    def forward(self, obs, detach=False):
+    def forward(self, obs):
         # forward features
         obs_prop = self.prop_observation(obs)
         obs_exte = self.exte_observation(obs)
-        z_proprio = self.proprio(obs_prop, detach)
-        z_extero = self.extero(obs_exte, detach)
+        z_proprio = self.proprio(obs_prop)
+        z_extero = self.extero(obs_exte)
         z_stack = th.cat((z_proprio, z_extero), dim=1)
         if hasattr(self, 'pixel'):
-            z_pixel = self.pixel(obs['pixel'], detach)
+            z_pixel = self.pixel(obs['pixel'])
             z_stack = th.cat((z_stack, z_pixel), dim=1)
 
         return z_stack

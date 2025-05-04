@@ -168,11 +168,11 @@ class RepresentationModel:
         if self.decoder is not None:
             self.decoder_optim.step()
 
-    def forward_z(self, observation, detach=False):
-        return self.encoder(observation, detach=detach)
+    def forward_z(self, observation, deterministic=False):
+        return self.encoder(observation)
 
-    def target_forward_z(self, observation, detach=False):
-        return self.encoder_target(observation, detach=detach)
+    def target_forward_z(self, observation, deterministic=False):
+        return self.encoder_target(observation)
 
     def decode_latent(self, observation_z):
         return self.decoder(observation_z)
@@ -565,14 +565,14 @@ class ProprioceptiveModel(RepresentationModel):
         self.decoder_optim.step()
         self.dec_proj_optim.step()
 
-    def forward_z(self, observation, detach=False):
-        obs_z = self.encoder(observation, detach=detach)
+    def forward_z(self, observation, deterministic=False):
+        obs_z = self.encoder(observation)
         if self.is_multimodal and not isinstance(obs_z, dict):
             obs_z = {'pixel': obs_z}
         return obs_z
 
-    def target_forward_z(self, observation, detach=False):
-        obs_z = self.encoder_target(observation, detach=detach)
+    def target_forward_z(self, observation, deterministic=False):
+        obs_z = self.encoder_target(observation)
         if self.is_multimodal and not isinstance(obs_z, dict):
             obs_z = {'pixel': obs_z}
         return obs_z
