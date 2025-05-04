@@ -10,6 +10,7 @@ from typing import List
 import torch as th
 from torch import nn
 import torch.distributions as D
+import torch.nn.functional as F
 
 from .models import RepresentationModel
 from .net import PixelEncoder
@@ -18,7 +19,8 @@ from .net import VectorEncoder
 
 
 def create_dist(mean, log_var):
-    std = th.exp(0.5 * log_var)
+    # std = th.exp(0.5 * log_var)
+    std = F.softplus(log_var) + 1e-5
     base_dist = D.Normal(mean, std)
     # transforms_list = [D.transforms.TanhTransform(cache_size=1)]
     # tanh_dist = D.TransformedDistribution(base_dist, transforms_list)
@@ -131,13 +133,11 @@ class RepresentationModelStochastic(RepresentationModel):
 
     def forward_z(self, observation, deterministic=False):
         dist = super().forward_z(observation)
-        if deterministic:
-            return dist.mean
-        else:
-            return dist.sample()
+        return dist.mean if deterministic else dist.sample()
 
     def target_forward_z(self, observation, deterministic=False):
-        return super().target_forward_z(observation).mean
+        dist = super().target_forward_z(observation)
+        return dist.mean if deterministic else dist.sample()
 
 
 class InfoSPRStochasticModel(RepresentationModelStochastic):
@@ -159,7 +159,7 @@ class InfoSPRStochasticModel(RepresentationModelStochastic):
 
     def compute_representation_loss(self, observations, actions, next_observations):
         # Encode observations
-        obs_z = self.encoder(observations).rsample()
+        obs_z = self.encoder(observations).mean
         obs_z1_hat = self.decoder(obs_z, actions)
         obs_z1 = self.encoder_target(next_observations)
         # compare next_latent with transition
