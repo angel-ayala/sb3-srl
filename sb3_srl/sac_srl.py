@@ -146,7 +146,7 @@ class SRLSAC(SAC, SRLAlgorithm):
             # Get current Q-values estimates for each critic network
             # using action from the replay buffer
             if self.policy.rep_model.joint_optimization:
-                obs_z = self.forward_z(replay_data.observations)
+                obs_z = self.forward_z(replay_data.observations, use_grad=True)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
             # Compute critic loss

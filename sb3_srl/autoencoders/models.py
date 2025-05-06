@@ -168,10 +168,10 @@ class RepresentationModel:
         if self.decoder is not None:
             self.decoder_optim.step()
 
-    def forward_z(self, observation, deterministic=False):
+    def forward_z(self, observation):
         return self.encoder(observation)
 
-    def target_forward_z(self, observation, deterministic=False):
+    def target_forward_z(self, observation):
         return self.encoder_target(observation)
 
     def decode_latent(self, observation_z):

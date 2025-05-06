@@ -52,7 +52,7 @@ class VectorEncoderStochastic(VectorEncoder):
                   MeanVarHead(latent_dim, latent_dim)]
         self.head_model = nn.Sequential(*layers)
 
-    def forward(self, obs, detach=False):
+    def forward(self, obs):
         mean, log_var = super().forward(obs)
         dist = create_dist(mean, log_var)
         return dist  # return distribution object by default
@@ -131,13 +131,21 @@ class RepresentationModelStochastic(RepresentationModel):
             del enc_args['layers_filter']
             self.encoder = VectorEncoderStochastic(**enc_args)
 
-    def forward_z(self, observation, deterministic=False):
+    def forward_z(self, observation, deterministic=False, use_grad=False):
         dist = super().forward_z(observation)
-        return dist.mean if deterministic else dist.sample()
+        if deterministic:
+            z = dist.mean
+        else:
+            z = dist.rsample() if use_grad else dist.sample()
+        return th.tanh(z)
 
-    def target_forward_z(self, observation, deterministic=False):
+    def target_forward_z(self, observation, deterministic=False, use_grad=False):
         dist = super().target_forward_z(observation)
-        return dist.mean if deterministic else dist.sample()
+        if deterministic:
+            z = dist.mean
+        else:
+            z = dist.rsample() if use_grad else dist.sample()
+        return th.tanh(z)
 
 
 class InfoSPRStochasticModel(RepresentationModelStochastic):
@@ -159,15 +167,10 @@ class InfoSPRStochasticModel(RepresentationModelStochastic):
 
     def compute_representation_loss(self, observations, actions, next_observations):
         # Encode observations
-        obs_z = self.encoder(observations).mean
+        obs_z = self.encoder(observations).rsample()
         obs_z1_hat = self.decoder(obs_z, actions)
         obs_z1 = self.encoder_target(next_observations)
         # compare next_latent with transition
-        loss = D.kl.kl_divergence(obs_z1, obs_z1_hat).mean()
-        # L2 over Z
-        latent_loss = obs_z1_hat.rsample()
-        latent_loss = latent_loss.pow(2).mean()
-        self.log("l2_loss", latent_loss.item())
-        # loss = kl_loss + latent_loss * self.decoder_lambda
-        self.log("rep_loss", loss.item())
-        return loss  # *2.
+        kl_loss = D.kl.kl_divergence(obs_z1, obs_z1_hat).mean()
+        self.log("kl_loss", kl_loss.item())
+        return kl_loss
