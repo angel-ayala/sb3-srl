@@ -99,6 +99,7 @@ class RepresentationModel:
             raise ValueError(f"{self.type}Model is not Multimodal ready!")
         elif self.is_pixels:
             del enc_args['layers_dim']
+            del enc_args['layers_filter']
             enc_args['features_dim'] = 512
             enc_args['normalized_image'] = False
             self.encoder = NatureCNNEncoder(**enc_args)
