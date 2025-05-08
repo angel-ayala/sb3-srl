@@ -262,22 +262,22 @@ class SimpleMuMoEncoder(nn.Module):
         return self.forward_z(feats)
 
 
-class NatureCNN(nn.Module):
+class NatureCNNEncoder(nn.Module):
     """
     CNN from DQN Nature paper:
     """
 
     def __init__(
         self,
-        pixel_shape: tuple,
+        state_shape: tuple,
+        latent_dim: int = 256,
         features_dim: int = 512,
-        output_dim: int = 256,
         normalized_image: bool = False) -> None:
         super().__init__()
         # We assume CxHxW images (channels first)
-        n_input_channels = pixel_shape[0]
+        n_input_channels = state_shape[0]
         self.features_dim = features_dim
-        self.latent_dim = output_dim
+        self.latent_dim = latent_dim
         self.feats_model = nn.Sequential(
             nn.Conv2d(n_input_channels, 32, kernel_size=8, stride=4, padding=0),
             nn.LeakyReLU(),
@@ -290,10 +290,10 @@ class NatureCNN(nn.Module):
         )
         self.normalized_image = normalized_image
         self.head_model = nn.Sequential(nn.LeakyReLU(),
-                                        nn.Linear(features_dim, output_dim),
+                                        nn.Linear(features_dim, latent_dim),
                                         nn.LeakyReLU(),
-                                        nn.Linear(output_dim, output_dim),
-                                        nn.LayerNorm(output_dim),
+                                        nn.Linear(latent_dim, latent_dim),
+                                        nn.LayerNorm(latent_dim),
                                         nn.Tanh())
 
     def forward_feats(self, observations: th.Tensor) -> th.Tensor:
@@ -335,7 +335,7 @@ class ProprioceptiveEncoder(nn.Module):
         if is_pixel:
             if self.pixel_dim is None:
                 self.pixel_dim = latent_dim
-            self.pixel = NatureCNN(pixel_shape, features_dim=512, output_dim=self.pixel_dim)  # 50)
+            self.pixel = NatureCNNEncoder(pixel_shape, latent_dim=self.pixel_dim, features_dim=512)
             self.feature_dim += self.pixel_dim
 
 

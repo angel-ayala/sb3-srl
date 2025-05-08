@@ -19,8 +19,8 @@ from sb3_srl.introspection import IntrospectionBelief
 from sb3_srl.utils import EarlyStopper
 
 from .net import GuidedSPRDecoder
+from .net import NatureCNNEncoder
 from .net import PixelDecoder
-from .net import PixelEncoder
 from .net import ProjectionN
 from .net import ProprioceptiveEncoder
 from .net import SimpleSPRDecoder
@@ -99,7 +99,9 @@ class RepresentationModel:
             raise ValueError(f"{self.type}Model is not Multimodal ready!")
         elif self.is_pixels:
             del enc_args['layers_dim']
-            self.encoder = PixelEncoder(**enc_args)
+            enc_args['features_dim'] = 512
+            enc_args['normalized_image'] = False
+            self.encoder = NatureCNNEncoder(**enc_args)
         else:
             del enc_args['layers_filter']
             self.encoder = VectorEncoder(**enc_args)
@@ -168,11 +170,11 @@ class RepresentationModel:
         if self.decoder is not None:
             self.decoder_optim.step()
 
-    def forward_z(self, observation):
-        return self.encoder(observation)
+    def forward_z(self, observation, deterministic=False):
+        return self.encoder(observation)  # always deterministic
 
-    def target_forward_z(self, observation):
-        return self.encoder_target(observation)
+    def target_forward_z(self, observation, deterministic=False):
+        return self.encoder_target(observation)  # always deterministic
 
     def decode_latent(self, observation_z):
         return self.decoder(observation_z)
