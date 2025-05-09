@@ -530,43 +530,44 @@ class ProprioceptiveModel(RepresentationModel):
             pixel_dim=pixel_dim)
         print(self.encoder)
 
-    def to(self, device):
-        super().to(device)
-        self.home_pos = self.home_pos.to(device)
-        if self.is_multimodal:
-            self.augment_model = self.augment_model.to(device)
-
     def _setup_decoder(self):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
-        dec_args['feature_dim'] = self.encoder.feature_dim
-        if self.is_multimodal:
-            dec_args['pixel_dim'] = self.encoder.pixel_dim
-        self.decoder = GuidedSPRDecoder(**dec_args)
+        dec_args['latent_dim'] = self.encoder.latent_dim
+        self.decoder = SimpleSPRDecoder(**dec_args)
+        # if self.is_multimodal:
+            # dec_args['pixel_dim'] = self.encoder.pixel_dim
+        # self.decoder = GuidedSPRDecoder(**dec_args)
         print(self.decoder)
 
-    def dec_optimizer(self, decoder_lr, optim_class=th.optim.Adam,
-                      **optim_kwargs):
-        contrastive_parameters = (list(self.decoder.transition.parameters()) +
-                                  list(self.decoder.projection.parameters()))
-        self.decoder_optim = optim_class(contrastive_parameters,
-                                         lr=decoder_lr, **optim_kwargs)
+    # def to(self, device):
+    #     super().to(device)
+    #     self.home_pos = self.home_pos.to(device)
+    #     if self.is_multimodal:
+    #         self.augment_model = self.augment_model.to(device)
 
-        aux_parameters = (list(self.decoder.accel_proj.parameters()) +
-                          list(self.decoder.home_proj.parameters()))
-        if self.is_multimodal:
-               aux_parameters += list(self.decoder.pose_proj.parameters())
-        self.dec_proj_optim = optim_class(aux_parameters,
-                                         lr=decoder_lr, **optim_kwargs)
+    # def dec_optimizer(self, decoder_lr, optim_class=th.optim.Adam,
+    #                   **optim_kwargs):
+    #     contrastive_parameters = (list(self.decoder.transition.parameters()) +
+    #                               list(self.decoder.projection.parameters()))
+    #     self.decoder_optim = optim_class(contrastive_parameters,
+    #                                      lr=decoder_lr, **optim_kwargs)
 
-    def decoder_optim_zero_grad(self):
-        self.decoder_optim.zero_grad()
-        self.dec_proj_optim.zero_grad()
+    #     aux_parameters = (list(self.decoder.accel_proj.parameters()) +
+    #                       list(self.decoder.home_proj.parameters()))
+    #     if self.is_multimodal:
+    #            aux_parameters += list(self.decoder.pose_proj.parameters())
+    #     self.dec_proj_optim = optim_class(aux_parameters,
+    #                                      lr=decoder_lr, **optim_kwargs)
 
-    def decoder_optim_step(self):
-        self.decoder_optim.step()
-        self.dec_proj_optim.step()
+    # def decoder_optim_zero_grad(self):
+    #     self.decoder_optim.zero_grad()
+    #     self.dec_proj_optim.zero_grad()
+
+    # def decoder_optim_step(self):
+    #     self.decoder_optim.step()
+    #     self.dec_proj_optim.step()
 
     def forward_z(self, observation, deterministic=False):
         obs_z = self.encoder(observation)
@@ -585,6 +586,21 @@ class ProprioceptiveModel(RepresentationModel):
         pass
 
     def compute_representation_loss(self, observations, actions, next_observations):
+        # Encode observations
+        obs_z = self.encoder(observations)
+        obs_z1_hat = self.decoder(obs_z, actions)
+        obs_z1 = self.encoder_target(next_observations)
+        # compare next_latent with transition
+        contrastive = info_nce_loss(obs_z1, obs_z1_hat)
+        # L2 over Z
+        latent_loss = latent_l2_loss(obs_z1)
+        self.log("l2_loss", latent_loss.item())
+        self.update_stopper(latent_loss)
+        loss = contrastive + latent_loss * self.decoder_lambda
+        self.log("rep_loss", loss.item())
+        return loss  # *2.
+        
+    def __compute_representation_loss(self, observations, actions, next_observations):
         if self.is_multimodal:
             # augment pixel observation
             for i in range(0, observations['pixel'].shape[1], 3):

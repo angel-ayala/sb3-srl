@@ -322,22 +322,21 @@ class ProprioceptiveEncoder(nn.Module):
         extero_input = 22 - proprio_input
         home_input = latent_dim
         self.pixel_dim = pixel_dim
-        self.feature_dim = 0
+        self.latent_dim = 0
 
         # Proprioceptive observation
         self.proprio = VectorEncoder((proprio_input, ), latent_dim, layers_dim)
-        self.feature_dim += self.proprio.feature_dim
+        self.latent_dim += self.proprio.latent_dim
         # Exteroceptive observation
         self.extero = VectorEncoder((extero_input, ), latent_dim, layers_dim)
-        self.feature_dim += self.extero.feature_dim
+        self.latent_dim += self.extero.latent_dim
         # Pixel-based observation
         is_pixel = pixel_shape is not None
         if is_pixel:
             if self.pixel_dim is None:
                 self.pixel_dim = latent_dim
             self.pixel = NatureCNNEncoder(pixel_shape, latent_dim=self.pixel_dim, features_dim=512)
-            self.feature_dim += self.pixel_dim
-
+            self.latent_dim += self.pixel_dim
 
     def prop_observation(self, observation):
         if isinstance(observation, dict):
@@ -358,7 +357,6 @@ class ProprioceptiveEncoder(nn.Module):
     def split_observation(self, observation):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
         return self.prop_observation(observation), self.exte_observation(observation)
-
 
     def forward_quaternion(self, euler):
         return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
