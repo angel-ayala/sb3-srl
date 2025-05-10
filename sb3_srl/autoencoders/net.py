@@ -375,6 +375,37 @@ class ProprioceptiveEncoder(nn.Module):
         return z_stack
 
 
+class ProprioceptiveSPRDecoder(nn.Module):
+    """ProprioceptiveSPRDecoder as representation learning function."""
+
+    def __init__(self,
+                 action_shape: tuple,
+                 latent_dim: int,
+                 layers_dim: List[int] = [256]):
+        super(ProprioceptiveSPRDecoder, self).__init__()
+        code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
+        code_layers.insert(-1, nn.LayerNorm(latent_dim))
+        self.proprio_trans = nn.Sequential(*code_layers)
+        self.extero_trans = nn.Sequential(*code_layers)
+        out_latent = 2 * latent_dim
+        proj_layers = create_mlp(out_latent, out_latent, layers_dim, nn.LeakyReLU, True, True)
+        self.projection = nn.Sequential(*proj_layers)
+
+    def forward_z_hat(self, z, action):
+        proprio_z, extero_z = z.chunk(2, dim=1)
+        proprio_z_hat = self.proprio_trans(th.cat([proprio_z, action], dim=1))
+        extero_z_hat = self.extero_trans(th.cat([extero_z, action], dim=1))
+        return th.cat([proprio_z_hat, extero_z_hat], dim=1)
+
+    def forward_proj(self, code):
+        return self.projection(code)
+
+    def forward(self, z, action):
+        code = self.forward_z_hat(z, action)
+        proj = self.forward_proj(code)
+        return proj
+    
+
 class GuidedSPRDecoder(SimpleSPRDecoder):
     """SimpleSPRDecoder as representation learning function."""
     def __init__(self,

@@ -18,11 +18,11 @@ from stable_baselines3.common.logger import Image as ImageLogger
 from sb3_srl.introspection import IntrospectionBelief
 from sb3_srl.utils import EarlyStopper
 
-from .net import GuidedSPRDecoder
 from .net import NatureCNNEncoder
 from .net import PixelDecoder
 from .net import ProjectionN
 from .net import ProprioceptiveEncoder
+from .net import ProprioceptiveSPRDecoder
 from .net import SimpleSPRDecoder
 from .net import SPRDecoder
 from .net import VectorDecoder
@@ -534,11 +534,7 @@ class ProprioceptiveModel(RepresentationModel):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
-        dec_args['latent_dim'] = self.encoder.latent_dim
-        self.decoder = SimpleSPRDecoder(**dec_args)
-        # if self.is_multimodal:
-            # dec_args['pixel_dim'] = self.encoder.pixel_dim
-        # self.decoder = GuidedSPRDecoder(**dec_args)
+        self.decoder = ProprioceptiveSPRDecoder(**dec_args)
         print(self.decoder)
 
     # def to(self, device):
