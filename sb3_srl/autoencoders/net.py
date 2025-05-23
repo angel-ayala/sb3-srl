@@ -386,6 +386,8 @@ class ProprioceptiveSPRDecoder(nn.Module):
         code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
         code_layers.insert(-1, nn.LayerNorm(latent_dim))
         self.proprio_trans = nn.Sequential(*code_layers)
+        code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
+        code_layers.insert(-1, nn.LayerNorm(latent_dim))
         self.extero_trans = nn.Sequential(*code_layers)
         out_latent = 2 * latent_dim
         proj_layers = create_mlp(out_latent, out_latent, layers_dim, nn.LeakyReLU, True, True)
