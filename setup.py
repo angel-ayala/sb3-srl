@@ -12,7 +12,7 @@ setup(
     license='GPL-3.0',
     packages=[package_name],
     install_requires=[
-         'gymnasium==0.29.1",
+         'gymnasium==0.29.1',
          'stable_baselines3>=2.6.0'
     ],
     classifiers=[
