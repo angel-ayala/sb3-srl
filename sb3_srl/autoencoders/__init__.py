@@ -13,6 +13,7 @@ from .models import InfoSPRModel
 from .models import IntrospectiveInfoSPR
 from .models import ProprioceptiveModel
 from .stochastic import InfoSPRStochasticModel
+from .stochastic import ProprioceptiveStochasticModel
 
 
 def instance_autoencoder(ae_type: str, ae_params: dict) -> RepresentationModel:
