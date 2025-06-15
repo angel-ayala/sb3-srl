@@ -18,6 +18,9 @@ from .stochastic import ProprioceptiveStochasticModel
 
 def instance_autoencoder(ae_type: str, ae_params: dict) -> RepresentationModel:
     ae_params_ = ae_params.copy()
+    if 'is_pixel' in ae_params.keys():
+        ae_params_['is_pixels'] = ae_params_['is_pixel']
+        del ae_params_['is_pixel']
     del ae_params_['encoder_steps']
     del ae_params_['encoder_lr']
     del ae_params_['decoder_lr']

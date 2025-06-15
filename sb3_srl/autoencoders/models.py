@@ -265,6 +265,15 @@ class RepresentationModel:
         out_str += str(self.decoder)
         return out_str
 
+    def __str__(self):
+        if self.is_pixels:
+            out_str = "Pixel"
+        else:
+            out_str = "Vector"
+        out_str += f"{self.type}Model"
+        if self.encoder_only:
+            out_str += "(EncoderOnly)"
+        return out_str
 
 class ReconstructionModel(RepresentationModel):
     def __init__(self, *args, **kwargs):
