@@ -10,7 +10,7 @@ from typing import List, Optional
 import torch as th
 from torch import nn
 import torch.nn.functional as F
-from pytorch3d.transforms.rotation_conversions import euler_angles_to_matrix, matrix_to_quaternion
+# from pytorch3d.transforms.rotation_conversions import euler_angles_to_matrix, matrix_to_quaternion
 
 from stable_baselines3.common.torch_layers import create_mlp
 
@@ -358,8 +358,8 @@ class ProprioceptiveEncoder(nn.Module):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
         return self.prop_observation(observation), self.exte_observation(observation)
 
-    def forward_quaternion(self, euler):
-        return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
+    # def forward_quaternion(self, euler):
+    #     return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
 
     def forward(self, obs):
         # forward features
