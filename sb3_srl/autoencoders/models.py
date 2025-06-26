@@ -537,14 +537,14 @@ class ProprioceptiveModel(RepresentationModel):
             layers_dim=self.args['layers_dim'],
             pixel_shape=pixel_shape,
             pixel_dim=pixel_dim)
-        print(self.encoder)
+        # print(self.encoder)
 
     def _setup_decoder(self):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
         self.decoder = ProprioceptiveSPRDecoder(**dec_args)
-        print(self.decoder)
+        # print(self.decoder)
 
     # def to(self, device):
     #     super().to(device)
