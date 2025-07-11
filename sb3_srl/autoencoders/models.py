@@ -431,7 +431,7 @@ class InfoSPRModel(RepresentationModel):
         latent_loss = latent_l2_loss(obs_z1)
         self.log("l2_loss", latent_loss.item())
         self.update_stopper(latent_loss)
-        loss = contrastive + latent_loss * self.decoder_lambda
+        loss = contrastive #+ latent_loss * self.decoder_lambda
         self.log("rep_loss", loss.item())
         return loss  # *2.
 
