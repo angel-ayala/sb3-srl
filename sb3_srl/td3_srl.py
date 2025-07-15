@@ -48,10 +48,12 @@ class SRLTD3Policy(TD3Policy, SRLPolicy):
         return ContinuousCritic(**critic_kwargs).to(self.device)
 
     def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
-        return SRLPolicy._predict(self, observation, deterministic)
+        obs_z = SRLPolicy._predict(self, observation, deterministic)
+        return TD3Policy._predict(self, obs_z, deterministic)
 
     def set_training_mode(self, mode: bool) -> None:
-        return SRLPolicy.set_training_mode(self, mode)
+        TD3Policy.set_training_mode(self, mode)
+        SRLPolicy.set_training_mode(self, mode)
 
 
 class SRLTD3(TD3, SRLAlgorithm):

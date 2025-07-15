@@ -39,11 +39,9 @@ class SRLPolicy:
         #   Predictions are always deterministic.
         with th.no_grad():
             obs_z = self.rep_model.forward_z(observation, deterministic)
-        return self.actor._predict(obs_z, deterministic)
+        return obs_z
 
     def set_training_mode(self, mode: bool) -> None:
-        self.actor.set_training_mode(mode)
-        self.critic.set_training_mode(mode)
         self.rep_model.set_training_mode(mode)
         self.training = mode
 
