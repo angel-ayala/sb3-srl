@@ -171,10 +171,10 @@ class RepresentationModel:
         if self.decoder is not None:
             self.decoder_optim.step()
 
-    def forward_z(self, observation, deterministic=False):
+    def forward_z(self, observation, deterministic=False, use_grad=True):
         return self.encoder(observation)  # always deterministic
 
-    def target_forward_z(self, observation, deterministic=False):
+    def target_forward_z(self, observation, deterministic=False, use_grad=True):
         return self.encoder_target(observation)  # always deterministic
 
     def decode_latent(self, observation_z):
@@ -255,24 +255,19 @@ class RepresentationModel:
         return p_loss
 
     def __repr__(self):
-        if self.is_pixels:
-            out_str = "Pixel"
-        else:
-            out_str = "Vector"
-        out_str += f"{self.type}Model:\n"
+        out_str = f"{self.type}Model:\n"
         out_str += str(self.encoder)
         out_str += '\n'
         out_str += str(self.decoder)
         return out_str
 
     def __str__(self):
-        if self.is_pixels:
-            out_str = "Pixel"
+        out_str = f"{self.type}Model"
+        out_str += f"({self.encoder.__class__.__name__}"
+        if not self.encoder_only:
+            out_str += f" + {self.decoder.__class__.__name__})"
         else:
-            out_str = "Vector"
-        out_str += f"{self.type}Model"
-        if self.encoder_only:
-            out_str += "(EncoderOnly)"
+            out_str += ")"
         return out_str
 
 class ReconstructionModel(RepresentationModel):
@@ -291,6 +286,10 @@ class ReconstructionModel(RepresentationModel):
         else:
             del dec_args['layers_filter']
             self.decoder = VectorDecoder(**dec_args)
+
+    def set_stopper(self, patience, threshold=0.):
+        # not required
+        pass
 
     def preprocess_reconstruction(self, observations):
         # reconstruct normalized observation

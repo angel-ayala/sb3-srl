@@ -5,7 +5,7 @@ Created on Thu Feb  6 22:27:14 2025
 
 @author: angel
 """
-from typing import Optional
+from typing import Optional, Any
 
 import numpy as np
 import torch as th
@@ -30,13 +30,17 @@ class SRLSACPolicy(SACPolicy, SRLPolicy):
                  ae_config: dict = {},
                  encoder_tau: float = 0.999, **kwargs):
         kwargs['features_extractor_class'] = DictFlattenExtractor
-        ae_config = (ae_config[0] + "Stochastic", ae_config[1])
         SRLPolicy.__init__(self, ae_config, encoder_tau)
         SACPolicy.__init__(self, *args, **kwargs)
 
     def _build(self, lr_schedule):
         SRLPolicy._build(self, lr_schedule)
         SACPolicy._build(self, lr_schedule)
+
+    def _get_constructor_parameters(self) -> dict[str, Any]:
+        data = SACPolicy._get_constructor_parameters(self)
+        data.update(SRLPolicy._get_constructor_parameters(self))
+        return data
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)

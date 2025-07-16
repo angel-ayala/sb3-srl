@@ -5,7 +5,7 @@ Created on Thu Feb  6 11:05:01 2025
 
 @author: angel
 """
-from typing import Optional
+from typing import Optional, Any
 
 import numpy as np
 import torch as th
@@ -36,6 +36,11 @@ class SRLTD3Policy(TD3Policy, SRLPolicy):
     def _build(self, lr_schedule):
         SRLPolicy._build(self, lr_schedule)
         TD3Policy._build(self, lr_schedule)
+
+    def _get_constructor_parameters(self) -> dict[str, Any]:
+        data = TD3Policy._get_constructor_parameters(self)
+        data.update(SRLPolicy._get_constructor_parameters(self))
+        return data
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
@@ -112,7 +117,7 @@ class SRLTD3(TD3, SRLAlgorithm):
 
             # Get current Q-values estimates for each critic network
             if self.policy.rep_model.joint_optimization:
-                obs_z = self.forward_z(replay_data.observations)
+                obs_z = self.forward_z(replay_data.observations, use_grad=True)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
             # Compute critic loss

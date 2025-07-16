@@ -11,13 +11,20 @@ import torch as th
 from torch import nn
 import torch.distributions as D
 import torch.nn.functional as F
+import torchvision
+
+from stable_baselines3.common.logger import Image as ImageLogger
 
 from .models import RepresentationModel
 from .net import PixelEncoder
+from .net import PixelDecoder
 from .net import ProprioceptiveEncoder
 from .net import ProprioceptiveSPRDecoder
 from .net import SimpleSPRDecoder
 from .net import VectorEncoder
+from .net import VectorDecoder
+from .utils import latent_l2_loss
+from .utils import preprocess_pixel_obs
 
 
 def create_dist(mean, log_var):
@@ -149,6 +156,61 @@ class RepresentationModelStochastic(RepresentationModel):
             z = dist.rsample() if use_grad else dist.sample()
         return th.tanh(z)
 
+
+class ReconstructionStochasticModel(RepresentationModelStochastic):
+    def __init__(self, *args, **kwargs):
+        super(ReconstructionStochasticModel, self).__init__(
+            'Reconstruction', *args, **kwargs)
+        if not self.is_pixels:
+            self.set_scaler((-1, 1))
+        self._n_calls = 0
+
+    def _setup_decoder(self):
+        dec_args = self.args.copy()
+        del dec_args['action_shape']
+        if self.is_pixels:
+            del dec_args['layers_dim']
+            self.decoder = PixelDecoder(**dec_args)
+        else:
+            del dec_args['layers_filter']
+            self.decoder = VectorDecoder(**dec_args)
+
+    def set_stopper(self, patience, threshold=0.):
+        # not required
+        pass
+
+    def preprocess_reconstruction(self, observations):
+        # reconstruct normalized observation
+        if self.is_pixels:
+            obs = preprocess_pixel_obs(observations.float(), bits=5)
+        else:
+            obs = self.preprocess(observations)
+        return obs
+
+    def compute_representation_loss(self, observations, actions, next_observations):
+        # Compute reconstruction loss
+        obs_z = self.encoder(observations).rsample()
+        rec_obs = self.decoder(obs_z)
+        # MSE loss reconstruction
+        obs_norm = self.preprocess_reconstruction(observations)
+        rec_loss = F.mse_loss(rec_obs, obs_norm)
+        self.update_stopper(rec_loss)
+        # add L2 penalty on latent representation
+        latent_loss = latent_l2_loss(obs_z)
+        loss = rec_loss + latent_loss * self.decoder_lambda
+        self.log("l2_loss", latent_loss.item())
+        self.log("rep_loss", loss.item())
+        self._n_calls += 1
+        if self._n_calls % self.LOG_FREQ == 0 and self.is_pixels:
+            obs_log = rec_obs[-3:]
+            if obs_log.shape[1] > 3:
+                n_stack = obs_log.shape[1] // 3
+                obs_log = obs_log.reshape((obs_log.shape[0] * n_stack, 3) + obs_log.shape[-2:])
+            img_grid = torchvision.utils.make_grid(obs_log, nrow=3, value_range=(-.5, .5), normalize=True)
+            img = ImageLogger(img_grid, 'CHW')
+            self.log("pixel_reconstruction", img)
+        return loss
+    
 
 class InfoSPRStochasticModel(RepresentationModelStochastic):
     def __init__(self, *args, **kwargs):

@@ -5,7 +5,7 @@ Created on Thu Mar  6 16:16:29 2025
 
 @author: angel
 """
-from typing import Tuple
+from typing import Tuple, Any
 import torch as th
 from stable_baselines3.common.type_aliases import PyTorchObs
 from stable_baselines3.common.utils import get_parameters_by_name
@@ -33,6 +33,10 @@ class SRLPolicy:
                                       ae_params['decoder_lr'])
         self.rep_model.set_stopper(ae_params['encoder_steps'])
         self.rep_model.fit_observation(self.observation_space)
+        print('Using', self.rep_model)
+
+    def _get_constructor_parameters(self) -> dict[str, Any]:
+        return {'encoder_tau': self.encoder_tau, 'ae_config': self.ae_config}
 
     def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
         # Note: the deterministic parameter is ignored in the case of TD3.

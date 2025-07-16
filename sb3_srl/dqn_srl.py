@@ -5,11 +5,14 @@ Created on Thu Feb  6 11:05:01 2025
 
 @author: angel
 """
+from typing import Any
+
 import numpy as np
 import torch as th
 from torch.nn import functional as F
 
 from stable_baselines3.common.type_aliases import PyTorchObs
+from stable_baselines3.common.utils import polyak_update
 
 from stable_baselines3 import DQN
 from stable_baselines3.dqn.policies import QNetwork
@@ -32,7 +35,13 @@ class SRLDQNPolicy(DQNPolicy, SRLPolicy):
         SRLPolicy._build(self, lr_schedule)
         DQNPolicy._build(self, lr_schedule)
 
-    def make_q_net(self) -> QNetwork:# Make sure we always have separate networks for features extractors etc
+    def _get_constructor_parameters(self) -> dict[str, Any]:
+        data = DQNPolicy._get_constructor_parameters(self)
+        data.update(SRLPolicy._get_constructor_parameters(self))
+        return data
+
+    def make_q_net(self) -> QNetwork:
+        # Make sure we always have separate networks for features extractors etc
         net_args = self._update_features_extractor(self.net_args, features_extractor=None)
         net_args["features_dim"] = self.latent_dim
         return QNetwork(**net_args).to(self.device)
@@ -70,6 +79,23 @@ class SRLDQN(DQN, SRLAlgorithm):
         extra = extra1 + extra2
         return state_dicts, extra
 
+    def _on_step(self) -> None:
+        """
+        Update the exploration rate and target network if needed.
+        This method is called in ``collect_rollouts()`` after each step in the environment.
+        """
+        self._n_calls += 1
+        # Account for multiple environments
+        # each call to step() corresponds to n_envs transitions
+        if self._n_calls % max(self.target_update_interval // self.n_envs, 1) == 0:
+            polyak_update(self.q_net.parameters(), self.q_net_target.parameters(), self.tau)
+            # Copy running stats, see GH issue #996
+            polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
+            self.update_encoder_target()  # update encoder function
+
+        self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
+        self.logger.record("rollout/exploration_rate", self.exploration_rate)
+
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
@@ -102,7 +128,7 @@ class SRLDQN(DQN, SRLAlgorithm):
 
             # Get current Q-values estimates
             if self.policy.rep_model.joint_optimization:
-                obs_z = self.forward_z(replay_data.observations)
+                obs_z = self.forward_z(replay_data.observations, use_grad=True)
             current_q_values = self.q_net(obs_z)
 
             # Retrieve the q-values for the actions from the replay buffer
