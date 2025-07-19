@@ -34,6 +34,8 @@ class SRLDQNPolicy(DQNPolicy, SRLPolicy):
     def _build(self, lr_schedule):
         SRLPolicy._build(self, lr_schedule)
         DQNPolicy._build(self, lr_schedule)
+        if hasattr(self.rep_model.decoder, 'hot_encode_action'):
+            self.rep_model.decoder.hot_encode_action = True
 
     def _get_constructor_parameters(self) -> dict[str, Any]:
         data = DQNPolicy._get_constructor_parameters(self)

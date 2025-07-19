@@ -136,6 +136,7 @@ class SPRDecoder(nn.Module):
 
 class SimpleSPRDecoder(nn.Module):
     """SimpleSPRDecoder as representation learning function."""
+
     def __init__(self,
                  action_shape: tuple,
                  latent_dim: int,
@@ -146,8 +147,15 @@ class SimpleSPRDecoder(nn.Module):
         self.transition = nn.Sequential(*code_layers)
         proj_layers = create_mlp(latent_dim, latent_dim, layers_dim, nn.LeakyReLU, True, True)
         self.projection = nn.Sequential(*proj_layers)
+        self.action_dim = action_shape[-1]
+        self.hot_encode_action = False
 
     def forward_z_hat(self, z, action):
+        if self.hot_encode_action:
+            hot_action = th.zeros((action.shape[0], self.action_dim))
+            hot_action[th.arange(hot_action.size(0)).unsqueeze(1), action] = 1
+            action = hot_action
+
         return self.transition(th.cat([z, action], dim=1))
 
     def forward_proj(self, code):
