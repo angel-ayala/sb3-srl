@@ -34,6 +34,7 @@ class SRLPolicy:
         self.rep_model.set_stopper(ae_params['encoder_steps'])
         self.rep_model.fit_observation(self.observation_space)
         print('Using', self.rep_model)
+        self.rep_model.to(self.device)
 
     def _get_constructor_parameters(self) -> dict[str, Any]:
         return {'encoder_tau': self.encoder_tau, 'ae_config': self.ae_config}

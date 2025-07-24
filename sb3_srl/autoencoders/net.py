@@ -153,6 +153,8 @@ class SimpleSPRDecoder(nn.Module):
     def forward_z_hat(self, z, action):
         if self.hot_encode_action:
             hot_action = th.zeros((action.shape[0], self.action_dim))
+            if z.get_device() >= 0:
+                hot_action = hot_action.to(device=z.get_device())
             hot_action[th.arange(hot_action.size(0)).unsqueeze(1), action] = 1
             action = hot_action
 
@@ -414,7 +416,7 @@ class ProprioceptiveSPRDecoder(nn.Module):
         code = self.forward_z_hat(z, action)
         proj = self.forward_proj(code)
         return proj
-    
+
 
 class GuidedSPRDecoder(SimpleSPRDecoder):
     """SimpleSPRDecoder as representation learning function."""

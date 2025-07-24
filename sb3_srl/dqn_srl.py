@@ -106,7 +106,6 @@ class SRLDQN(DQN, SRLAlgorithm):
         self._update_learning_rate(self.policy.optimizer)
 
         losses = []
-        adv_values = []
         for _ in range(gradient_steps):
             # Increase update counter
             self._n_updates += 1
@@ -166,8 +165,7 @@ class SRLDQN(DQN, SRLAlgorithm):
                 self.policy.rep_model.update_representation(rep_loss)
 
             if self._n_updates % 1000 == 0:
-                Q_min = th.min(current_q_values, dim=1)[0].detach()
-                self.policy.rep_model.log_mi(obs_z, Q_min)
+                self.policy.rep_model.log_mi(obs_z, current_q_values.detach())
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/loss", np.mean(losses))

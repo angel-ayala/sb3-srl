@@ -104,6 +104,7 @@ class SRLSAC(SAC, SRLAlgorithm):
         for gradient_step in range(gradient_steps):
             # Sample replay buffer
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)  # type: ignore[union-attr]
+            self._n_updates += 1
 
             with th.no_grad():
                 obs_z = self.target_forward_z(replay_data.observations)
@@ -209,10 +210,8 @@ class SRLSAC(SAC, SRLAlgorithm):
                 # Copy running stats, see GH issue #996
                 polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
 
-            if gradient_step % 1000 == 0:
+            if self._n_updates % 1000 == 0:
                 self.policy.rep_model.log_mi(obs_z, Q_min)
-
-        self._n_updates += gradient_steps
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/ent_coef", np.mean(ent_coefs))
