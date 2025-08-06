@@ -323,14 +323,18 @@ class ProprioceptiveEncoder(nn.Module):
     def __init__(self,
                  vector_shape: tuple,
                  latent_dim: int,
+                 prop_mask: list[bool] = [True, True, True, True, True, True,  # imu, gyro
+                                          False, False, False, False, False, False,  # gps_pos, gps_vel
+                                          False, False, False, False, False, False,  # target-sensing
+                                          True, True, True, True],  # motors
                  layers_dim: List[int] = [256, 256],
                  pixel_shape: Optional[tuple] = None,
                  pixel_dim: Optional[int] = None):
         assert vector_shape[-1] == 22, "Observation state insufficient length, (IMU, Gyro, GPS, Vel, TargetSensors, Motors)"
         super(ProprioceptiveEncoder, self).__init__()
-        proprio_input = 10  # = 3 imu + 3 gyro + 4 motors
-        extero_input = 22 - proprio_input
-        home_input = latent_dim
+        proprio_input = sum(prop_mask)  # = 3 imu + 3 gyro + 4 motors
+        extero_input = len(prop_mask) - proprio_input
+        self.prop_mask = prop_mask
         self.pixel_dim = pixel_dim
         self.latent_dim = 0
 
@@ -353,16 +357,14 @@ class ProprioceptiveEncoder(nn.Module):
             observation = observation['vector']
         if len(observation.shape) == 3:
             observation = observation[:, -1].squeeze(1)
-        return th.cat((observation[:, :6], observation[:, -4:]), dim=1)
+        return observation[:, self.prop_mask]
 
     def exte_observation(self, observation):
         if isinstance(observation, dict):
             observation = observation['vector']
         if len(observation.shape) == 3:
-            exterioceptive = observation[:, -1, 6:18].squeeze(1)
-        else:
-            exterioceptive = observation[:, 6:18]
-        return exterioceptive
+            observation = observation[:, -1].squeeze(1)
+        return observation[:, [not m for m in self.prop_mask]]
 
     def split_observation(self, observation):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order

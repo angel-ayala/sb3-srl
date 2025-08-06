@@ -172,10 +172,16 @@ class RepresentationModel:
             self.decoder_optim.step()
 
     def forward_z(self, observation, deterministic=False, use_grad=True):
-        return self.encoder(observation)  # always deterministic
+        obs_z = self.encoder(observation)  # always deterministic
+        if self.is_multimodal and not isinstance(obs_z, dict):
+            obs_z = {'pixel': obs_z}
+        return obs_z
 
     def target_forward_z(self, observation, deterministic=False, use_grad=True):
-        return self.encoder_target(observation)  # always deterministic
+        obs_z = self.encoder_target(observation)  # always deterministic
+        if self.is_multimodal and not isinstance(obs_z, dict):
+            obs_z = {'pixel': obs_z}
+        return obs_z
 
     def decode_latent(self, observation_z):
         return self.decoder(observation_z)
@@ -573,18 +579,6 @@ class ProprioceptiveModel(RepresentationModel):
     #     self.decoder_optim.step()
     #     self.dec_proj_optim.step()
 
-    def forward_z(self, observation, deterministic=False):
-        obs_z = self.encoder(observation)
-        if self.is_multimodal and not isinstance(obs_z, dict):
-            obs_z = {'pixel': obs_z}
-        return obs_z
-
-    def target_forward_z(self, observation, deterministic=False):
-        obs_z = self.encoder_target(observation)
-        if self.is_multimodal and not isinstance(obs_z, dict):
-            obs_z = {'pixel': obs_z}
-        return obs_z
-
     def set_stopper(self, patience, threshold=0.):
         # not required
         pass
@@ -600,10 +594,10 @@ class ProprioceptiveModel(RepresentationModel):
         latent_loss = latent_l2_loss(obs_z1)
         self.log("l2_loss", latent_loss.item())
         self.update_stopper(latent_loss)
-        loss = contrastive + latent_loss * self.decoder_lambda
+        loss = contrastive  # + latent_loss * self.decoder_lambda
         self.log("rep_loss", loss.item())
         return loss  # *2.
-        
+
     def __compute_representation_loss(self, observations, actions, next_observations):
         if self.is_multimodal:
             # augment pixel observation
