@@ -323,14 +323,14 @@ class ProprioceptiveEncoder(nn.Module):
     def __init__(self,
                  vector_shape: tuple,
                  latent_dim: int,
+                 layers_dim: List[int] = [256, 256],
                  prop_mask: list[bool] = [True, True, True, True, True, True,  # imu, gyro
                                           False, False, False, False, False, False,  # gps_pos, gps_vel
                                           False, False, False, False, False, False,  # target-sensing
                                           True, True, True, True],  # motors
-                 layers_dim: List[int] = [256, 256],
                  pixel_shape: Optional[tuple] = None,
                  pixel_dim: Optional[int] = None):
-        assert vector_shape[-1] == 22, "Observation state insufficient length, (IMU, Gyro, GPS, Vel, TargetSensors, Motors)"
+        assert vector_shape[-1] == len(prop_mask), f"Invalid proprioceptive mask's, length ({len(prop_mask)}) != observation length ({vector_shape[-1]})."
         super(ProprioceptiveEncoder, self).__init__()
         proprio_input = sum(prop_mask)  # = 3 imu + 3 gyro + 4 motors
         extero_input = len(prop_mask) - proprio_input
@@ -393,7 +393,13 @@ class ProprioceptiveSPRDecoder(nn.Module):
     def __init__(self,
                  action_shape: tuple,
                  latent_dim: int,
-                 layers_dim: List[int] = [256]):
+                 layers_dim: List[int] = [256],
+                 prop_mask: list[bool] = [
+                     True, True, True, True, True, True,  # imu, gyro
+                     False, False, False, False, False, False,  # gps_pos, gps_vel
+                     False, False, False, False, False, False,  # target-sensing
+                     True, True, True, True],  # motors
+                 ):
         super(ProprioceptiveSPRDecoder, self).__init__()
         code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
         code_layers.insert(-1, nn.LayerNorm(latent_dim))

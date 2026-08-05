@@ -51,7 +51,8 @@ class RepresentationModel:
                  joint_optimization: bool = False,
                  introspection_lambda: float = 0,
                  is_pixels: bool = False,
-                 is_multimodal: bool = False):
+                 is_multimodal: bool = False,
+                 prop_mask: List[bool] = []):
         self.encoder = None
         self.decoder = None
         self.scaler = None
@@ -62,7 +63,9 @@ class RepresentationModel:
                      'state_shape': state_shape,
                      'latent_dim': latent_dim,
                      'layers_dim': layers_dim,
-                     'layers_filter': layers_filter}
+                     'layers_filter': layers_filter}        
+        if len(prop_mask) > 0:
+            self.args['prop_mask'] = prop_mask
         self.is_pixels = is_pixels
         self.is_multimodal = is_multimodal
         self.joint_optimization = joint_optimization
@@ -518,7 +521,7 @@ class ProprioceptiveModel(RepresentationModel):
         super(ProprioceptiveModel, self).__init__('Proprioception', *args, **kwargs)
         assert not self.is_pixels or self.is_multimodal, "ProprioceptionModel is not Pixel-based ready."
         self.home_pos = th.FloatTensor([0., 0., 0.3])
-        self.set_scaler((-1, 1))
+        # self.set_scaler((-1, 1))
 
     def fit_observation(self, observation_space):
         obs_space = observation_space['vector'] if self.is_multimodal else observation_space
@@ -540,6 +543,7 @@ class ProprioceptiveModel(RepresentationModel):
         self.encoder = ProprioceptiveEncoder(
             state_shape, self.args['latent_dim'],
             layers_dim=self.args['layers_dim'],
+            prop_mask=self.args['prop_mask'],
             pixel_shape=pixel_shape,
             pixel_dim=pixel_dim)
         # print(self.encoder)

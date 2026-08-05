@@ -112,7 +112,8 @@ class RepresentationModelStochastic(RepresentationModel):
                  joint_optimization: bool = False,
                  introspection_lambda: float = 0,
                  is_pixels: bool = False,
-                 is_multimodal: bool = False):
+                 is_multimodal: bool = False,
+                 prop_mask: List[bool] = []):
         super(RepresentationModelStochastic, self).__init__(
             model_type=model_type,
             action_shape=action_shape,
@@ -125,7 +126,8 @@ class RepresentationModelStochastic(RepresentationModel):
             joint_optimization=joint_optimization,
             introspection_lambda=introspection_lambda,
             is_pixels=is_pixels,
-            is_multimodal=is_multimodal)
+            is_multimodal=is_multimodal,
+            prop_mask=prop_mask)
         self.type += "Stochastic"
 
     def _setup_encoder(self):
@@ -245,11 +247,14 @@ class ProprioceptiveEncoderStochastic(ProprioceptiveEncoder):
                  vector_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256],
+                 prop_mask: list[bool] = [True, True, True, True, True, True,  # imu, gyro
+                                          False, False, False, False, False, False,  # gps_pos, gps_vel
+                                          False, False, False, False, False, False,  # target-sensing
+                                          True, True, True, True],  # motors
                  pixel_shape: Optional[tuple] = None,
                  pixel_dim: Optional[int] = None):
-        assert vector_shape[-1] == 22, "Observation state insufficient length, (IMU, Gyro, GPS, Vel, TargetSensors, Motors)"
         super(ProprioceptiveEncoderStochastic, self).__init__(
-            vector_shape, latent_dim, layers_dim=layers_dim,
+            vector_shape, latent_dim, layers_dim=layers_dim, prop_mask=prop_mask,
             pixel_shape=pixel_shape, pixel_dim=pixel_dim)
         # remove deterministic encoder layers
         del self.proprio.head_model
@@ -281,9 +286,14 @@ class ProprioceptiveDecoderStochastic(ProprioceptiveSPRDecoder):
     def __init__(self,
                  action_shape: tuple,
                  latent_dim: int,
-                 layers_dim: List[int] = [256]):
+                 layers_dim: List[int] = [256],
+                 prop_mask: list[bool] = [True, True, True, True, True, True,  # imu, gyro
+                                          False, False, False, False, False, False,  # gps_pos, gps_vel
+                                          False, False, False, False, False, False,  # target-sensing
+                                          True, True, True, True],  # motors
+                 ):
         super(ProprioceptiveDecoderStochastic, self).__init__(
-            action_shape, latent_dim, layers_dim=layers_dim)
+            action_shape, latent_dim, layers_dim=layers_dim, prop_mask=prop_mask)
         out_latent = 2 * latent_dim
         self.projection = MeanVarHead(out_latent, out_latent)
 
@@ -298,7 +308,7 @@ class ProprioceptiveStochasticModel(RepresentationModelStochastic):
         super(ProprioceptiveStochasticModel, self).__init__('Proprioception', *args, **kwargs)
         assert not self.is_pixels or self.is_multimodal, "ProprioceptiveStochasticModel is not Pixel-based ready."
         self.home_pos = th.FloatTensor([0., 0., 0.3])
-        self.set_scaler((-1, 1))
+        # self.set_scaler((-1, 1))
 
     def fit_observation(self, observation_space):
         obs_space = observation_space['vector'] if self.is_multimodal else observation_space
@@ -320,9 +330,9 @@ class ProprioceptiveStochasticModel(RepresentationModelStochastic):
         self.encoder = ProprioceptiveEncoderStochastic(
             state_shape, self.args['latent_dim'],
             layers_dim=self.args['layers_dim'],
+            prop_mask=self.args['prop_mask'],
             pixel_shape=pixel_shape,
             pixel_dim=pixel_dim)
-        print(self.encoder)
 
     def _setup_decoder(self):
         dec_args = self.args.copy()
@@ -330,7 +340,6 @@ class ProprioceptiveStochasticModel(RepresentationModelStochastic):
         del dec_args['layers_filter']
         # dec_args['latent_dim'] = self.encoder.latent_dim
         self.decoder = ProprioceptiveDecoderStochastic(**dec_args)
-        print(self.decoder)
 
     def set_stopper(self, patience, threshold=0.):
         # not required
