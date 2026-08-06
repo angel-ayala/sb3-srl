@@ -319,11 +319,34 @@ class NatureCNNEncoder(nn.Module):
         return self.forward_z(feats)
 
 
+class CrossAttention(nn.Module):
+    def __init__(self, latent_dim):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(
+            embed_dim=latent_dim,
+            num_heads=8,
+            batch_first=True
+        )
+    
+    def forward(self, z):
+        latent1, latent2 = z
+        # [batch, latent_dim] → [batch, 1, latent_dim]
+        latent1 = latent1.unsqueeze(1)
+        # [batch, latent_dim] → [batch, latent_dim, 1]
+        latent2 = latent2.unsqueeze(1)
+
+        # latent1 attends to latent2
+        fused, _ = self.attention(latent1, latent2, latent2)
+        
+        return fused.transpose(1, 2)  # [batch, latent_dim, L]
+
+
 class ProprioceptiveEncoder(nn.Module):
     def __init__(self,
                  vector_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256],
+                 fusion: Optional[str] = None,
                  prop_mask: list[bool] = [True, True, True, True, True, True,  # imu, gyro
                                           False, False, False, False, False, False,  # gps_pos, gps_vel
                                           False, False, False, False, False, False,  # target-sensing
@@ -335,6 +358,7 @@ class ProprioceptiveEncoder(nn.Module):
         proprio_input = sum(prop_mask)  # = 3 imu + 3 gyro + 4 motors
         extero_input = len(prop_mask) - proprio_input
         self.prop_mask = prop_mask
+        self.exte_mask = [not m for m in self.prop_mask]
         self.pixel_dim = pixel_dim
         self.latent_dim = 0
 
@@ -351,6 +375,33 @@ class ProprioceptiveEncoder(nn.Module):
                 self.pixel_dim = latent_dim
             self.pixel = NatureCNNEncoder(pixel_shape, latent_dim=self.pixel_dim, features_dim=512)
             self.latent_dim += self.pixel_dim
+        # learned fusion bias weight
+        self.fusion_type = None
+        if fusion is not None:
+            self.fusion_type = fusion
+            if fusion == 'linear':
+                self.fusion = nn.Sequential(
+                    nn.Conv1d(
+                        in_channels=self.latent_dim,
+                        out_channels=latent_dim,
+                        kernel_size=1,
+                        groups=latent_dim,
+                        bias=True
+                    ),
+                    nn.Flatten(start_dim=1),
+                    nn.LayerNorm(latent_dim),
+                    nn.Tanh()
+                )
+            elif fusion == 'attention':
+                self.fusion = nn.Sequential(
+                    CrossAttention(latent_dim),
+                    nn.Flatten(start_dim=1),
+                    nn.LayerNorm(latent_dim),
+                    nn.Tanh()
+                )
+            else:
+                raise NotImplementedError(f"Fusion method ({fusion}) not found, try with --fusion-linear --fusion-attention")
+            self.latent_dim = latent_dim
 
     def prop_observation(self, observation):
         if isinstance(observation, dict):
@@ -364,22 +415,37 @@ class ProprioceptiveEncoder(nn.Module):
             observation = observation['vector']
         if len(observation.shape) == 3:
             observation = observation[:, -1].squeeze(1)
-        return observation[:, [not m for m in self.prop_mask]]
+        return observation[:, self.exte_mask]
 
     def split_observation(self, observation):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
         return self.prop_observation(observation), self.exte_observation(observation)
+    
+    def fuse_latent(self, z1, z2):
+        if self.fusion_type == 'linear':
+            zf = th.cat((z1, z2), dim=1)
+            # print('shape concat', zf.shape)
+            zf = zf.reshape(zf.shape[0], 2 * self.latent_dim, 1)
+            # print('shape reshape', zf.shape)
+            zf = self.fusion(zf)
+            # print('1d conv shape', zf.shape)
+        elif self.fusion_type == 'attention':
+            zf = self.fusion((z1, z2))
+        else:
+            # concat
+            zf = th.cat((z1, z2), dim=1)
+        return zf
+        
 
     # def forward_quaternion(self, euler):
     #     return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
 
     def forward(self, obs):
         # forward features
-        obs_prop = self.prop_observation(obs)
-        obs_exte = self.exte_observation(obs)
+        obs_prop, obs_exte = self.split_observation(obs)
         z_proprio = self.proprio(obs_prop)
         z_extero = self.extero(obs_exte)
-        z_stack = th.cat((z_proprio, z_extero), dim=1)
+        z_stack = self.fuse_latent(z_proprio, z_extero)
         if hasattr(self, 'pixel'):
             z_pixel = self.pixel(obs['pixel'])
             z_stack = th.cat((z_stack, z_pixel), dim=1)
@@ -394,6 +460,7 @@ class ProprioceptiveSPRDecoder(nn.Module):
                  action_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256],
+                 fusion: Optional[str] = None,
                  prop_mask: list[bool] = [
                      True, True, True, True, True, True,  # imu, gyro
                      False, False, False, False, False, False,  # gps_pos, gps_vel
@@ -404,18 +471,24 @@ class ProprioceptiveSPRDecoder(nn.Module):
         code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
         code_layers.insert(-1, nn.LayerNorm(latent_dim))
         self.proprio_trans = nn.Sequential(*code_layers)
-        code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
-        code_layers.insert(-1, nn.LayerNorm(latent_dim))
-        self.extero_trans = nn.Sequential(*code_layers)
-        out_latent = 2 * latent_dim
+        out_latent = latent_dim
+        self.must_fuse = fusion is None
+        if self.must_fuse: # no fusion performed on encoder
+            code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
+            code_layers.insert(-1, nn.LayerNorm(latent_dim))
+            self.extero_trans = nn.Sequential(*code_layers)
+            out_latent = 2 * latent_dim
         proj_layers = create_mlp(out_latent, out_latent, layers_dim, nn.LeakyReLU, True, True)
         self.projection = nn.Sequential(*proj_layers)
 
     def forward_z_hat(self, z, action):
-        proprio_z, extero_z = z.chunk(2, dim=1)
-        proprio_z_hat = self.proprio_trans(th.cat([proprio_z, action], dim=1))
-        extero_z_hat = self.extero_trans(th.cat([extero_z, action], dim=1))
-        return th.cat([proprio_z_hat, extero_z_hat], dim=1)
+        if self.must_fuse:
+            proprio_z, extero_z = z.chunk(2, dim=1)
+            proprio_z_hat = self.proprio_trans(th.cat([proprio_z, action], dim=1))
+            extero_z_hat = self.extero_trans(th.cat([extero_z, action], dim=1))
+            return th.cat([proprio_z_hat, extero_z_hat], dim=1)
+        else:
+            return self.proprio_trans(th.cat([z, action], dim=1))
 
     def forward_proj(self, code):
         return self.projection(code)

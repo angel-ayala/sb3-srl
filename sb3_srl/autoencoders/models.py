@@ -518,6 +518,9 @@ class IntrospectiveInfoSPR(InfoSPRModel, IntrospectionBelief):
 
 class ProprioceptiveModel(RepresentationModel):
     def __init__(self, *args, **kwargs):
+        self.fusion = kwargs['fusion']
+        del kwargs['fusion']
+                
         super(ProprioceptiveModel, self).__init__('Proprioception', *args, **kwargs)
         assert not self.is_pixels or self.is_multimodal, "ProprioceptionModel is not Pixel-based ready."
         self.home_pos = th.FloatTensor([0., 0., 0.3])
@@ -532,28 +535,30 @@ class ProprioceptiveModel(RepresentationModel):
         return super().preprocess(obs)
 
     def _setup_encoder(self):
-        state_shape = self.args['state_shape']
-        pixel_shape = None
-        pixel_dim = None
+        enc_args = self.args.copy()
+        del enc_args['state_shape']
+        del enc_args['action_shape']
+        del enc_args['layers_filter']
+        enc_args['vector_shape'] = self.args['state_shape']
+        enc_args['pixel_shape'] = None
+        enc_args['pixel_dim'] = None
+        enc_args['fusion'] = self.fusion
+
         if self.is_multimodal:
-            state_shape = self.args['state_shape'][0]
-            pixel_shape = self.args['state_shape'][1]
-            pixel_dim = 50
+            enc_args['vector_shape'] = self.args['state_shape'][0]
+            enc_args['pixel_shape'] = self.args['state_shape'][1]
+            enc_args['pixel_dim'] = 50
             self.augment_model = AutoAugment()
-        self.encoder = ProprioceptiveEncoder(
-            state_shape, self.args['latent_dim'],
-            layers_dim=self.args['layers_dim'],
-            prop_mask=self.args['prop_mask'],
-            pixel_shape=pixel_shape,
-            pixel_dim=pixel_dim)
-        # print(self.encoder)
+        self.encoder = ProprioceptiveEncoder(**enc_args)
+        print(self.encoder)
 
     def _setup_decoder(self):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
+        dec_args['fusion'] = self.fusion
         self.decoder = ProprioceptiveSPRDecoder(**dec_args)
-        # print(self.decoder)
+        print(self.decoder)
 
     # def to(self, device):
     #     super().to(device)

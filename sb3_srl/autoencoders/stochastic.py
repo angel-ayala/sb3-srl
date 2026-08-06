@@ -247,6 +247,7 @@ class ProprioceptiveEncoderStochastic(ProprioceptiveEncoder):
                  vector_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256],
+                 fusion: Optional[str] = None,
                  prop_mask: list[bool] = [True, True, True, True, True, True,  # imu, gyro
                                           False, False, False, False, False, False,  # gps_pos, gps_vel
                                           False, False, False, False, False, False,  # target-sensing
@@ -255,7 +256,7 @@ class ProprioceptiveEncoderStochastic(ProprioceptiveEncoder):
                  pixel_dim: Optional[int] = None):
         super(ProprioceptiveEncoderStochastic, self).__init__(
             vector_shape, latent_dim, layers_dim=layers_dim, prop_mask=prop_mask,
-            pixel_shape=pixel_shape, pixel_dim=pixel_dim)
+            pixel_shape=pixel_shape, pixel_dim=pixel_dim, fusion=fusion)
         # remove deterministic encoder layers
         del self.proprio.head_model
         del self.extero.head_model
@@ -270,7 +271,8 @@ class ProprioceptiveEncoderStochastic(ProprioceptiveEncoder):
         obs_exte = self.exte_observation(obs)
         z_proprio = self.proprio.forward_feats(obs_prop)
         z_extero = self.extero.forward_feats(obs_exte)
-        z_stack = th.cat((z_proprio, z_extero), dim=1)
+        z_stack = self.fuse_latent(z_proprio, z_extero)
+
         if hasattr(self, 'pixel'):
             z_pixel = self.pixel(obs['pixel'])
             z_stack = th.cat((z_stack, z_pixel), dim=1)
@@ -287,14 +289,19 @@ class ProprioceptiveDecoderStochastic(ProprioceptiveSPRDecoder):
                  action_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256],
+                 fusion: Optional[str] = None,
                  prop_mask: list[bool] = [True, True, True, True, True, True,  # imu, gyro
                                           False, False, False, False, False, False,  # gps_pos, gps_vel
                                           False, False, False, False, False, False,  # target-sensing
                                           True, True, True, True],  # motors
                  ):
         super(ProprioceptiveDecoderStochastic, self).__init__(
-            action_shape, latent_dim, layers_dim=layers_dim, prop_mask=prop_mask)
-        out_latent = 2 * latent_dim
+            action_shape, latent_dim, layers_dim=layers_dim, prop_mask=prop_mask,
+            fusion=fusion)
+        if fusion is None:
+            out_latent = 2 * latent_dim
+        else:
+            out_latent = latent_dim
         self.projection = MeanVarHead(out_latent, out_latent)
 
     def forward_proj(self, z_code):
@@ -305,6 +312,9 @@ class ProprioceptiveDecoderStochastic(ProprioceptiveSPRDecoder):
     
 class ProprioceptiveStochasticModel(RepresentationModelStochastic):
     def __init__(self, *args, **kwargs):
+        self.fusion = kwargs['fusion']
+        del kwargs['fusion']
+
         super(ProprioceptiveStochasticModel, self).__init__('Proprioception', *args, **kwargs)
         assert not self.is_pixels or self.is_multimodal, "ProprioceptiveStochasticModel is not Pixel-based ready."
         self.home_pos = th.FloatTensor([0., 0., 0.3])
@@ -319,27 +329,31 @@ class ProprioceptiveStochasticModel(RepresentationModelStochastic):
         return super().preprocess(obs)
 
     def _setup_encoder(self):
-        state_shape = self.args['state_shape']
-        pixel_shape = None
-        pixel_dim = None
+        enc_args = self.args.copy()
+        del enc_args['state_shape']
+        del enc_args['action_shape']
+        del enc_args['layers_filter']
+        enc_args['vector_shape'] = self.args['state_shape']
+        enc_args['pixel_shape'] = None
+        enc_args['pixel_dim'] = None
+        enc_args['fusion'] = self.fusion
+
         # if self.is_multimodal:
-        #     state_shape = self.args['state_shape'][0]
-        #     pixel_shape = self.args['state_shape'][1]
-        #     pixel_dim = 50
+        #     enc_args['vector_shape'] = self.args['state_shape'][0]
+        #     enc_args['pixel_shape'] = self.args['state_shape'][1]
+        #     enc_args['pixel_dim'] = 50
         #     self.augment_model = AutoAugment()
-        self.encoder = ProprioceptiveEncoderStochastic(
-            state_shape, self.args['latent_dim'],
-            layers_dim=self.args['layers_dim'],
-            prop_mask=self.args['prop_mask'],
-            pixel_shape=pixel_shape,
-            pixel_dim=pixel_dim)
+        self.encoder = ProprioceptiveEncoderStochastic(**enc_args)
+        print(self.encoder)
 
     def _setup_decoder(self):
         dec_args = self.args.copy()
         del dec_args['state_shape']
         del dec_args['layers_filter']
+        dec_args['fusion'] = self.fusion
         # dec_args['latent_dim'] = self.encoder.latent_dim
         self.decoder = ProprioceptiveDecoderStochastic(**dec_args)
+        print(self.decoder)
 
     def set_stopper(self, patience, threshold=0.):
         # not required
