@@ -319,6 +319,45 @@ class NatureCNNEncoder(nn.Module):
         return self.forward_z(feats)
 
 
+class FusionMLP(nn.Module):
+    def __init__(self, latent_dim):
+        super().__init__()
+        self.fusion = nn.Sequential(
+            nn.Linear(2 * latent_dim, latent_dim, bias=True),
+            nn.LayerNorm(latent_dim),
+            nn.Tanh()
+        )
+
+    def forward(self, z):
+        zf = th.cat(z, dim=1)
+        zf = self.fusion(zf)
+        return zf
+
+
+class FusionConv1d(nn.Module):
+    def __init__(self, latent_dim):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.fusion = nn.Sequential(
+            nn.Conv1d(
+                in_channels=2 * latent_dim,
+                out_channels=latent_dim,
+                kernel_size=1,
+                groups=latent_dim,
+                bias=True
+            ),
+            nn.Flatten(start_dim=1),
+            nn.LayerNorm(latent_dim),
+            nn.Tanh()
+        )
+
+    def forward(self, z):
+        zf = th.cat(z, dim=1)
+        zf = zf.reshape(zf.shape[0], 2 * self.latent_dim, 1)
+        zf = self.fusion(zf)
+        return zf
+
+
 class CrossAttention(nn.Module):
     def __init__(self, latent_dim):
         super().__init__()
@@ -326,6 +365,11 @@ class CrossAttention(nn.Module):
             embed_dim=latent_dim,
             num_heads=8,
             batch_first=True
+        )
+        self.fusion = nn.Sequential(
+            nn.Flatten(start_dim=1),
+            nn.LayerNorm(latent_dim),
+            nn.Tanh()
         )
     
     def forward(self, z):
@@ -338,7 +382,62 @@ class CrossAttention(nn.Module):
         # latent1 attends to latent2
         fused, _ = self.attention(latent1, latent2, latent2)
         
-        return fused.transpose(1, 2)  # [batch, latent_dim, L]
+        return self.fusion(fused.transpose(1, 2))  # [batch, latent_dim, L]
+
+
+class GatedFusion(nn.Module):
+    def __init__(self, latent_dim):
+        super().__init__()
+        self.gate = nn.Sequential(
+            nn.Linear(latent_dim * 2, latent_dim),
+            nn.Sigmoid()
+        )
+        self.fusion = nn.Sequential(
+            nn.LayerNorm(latent_dim),
+            nn.Tanh()
+        )
+
+    def forward(self, z):
+        z1, z2 = z
+        g = self.gate(th.cat([z1, z2], dim=-1))
+        return self.fusion(g * z1 + (1 - g) * z2)
+
+
+class FiLMFusion(nn.Module):
+    def __init__(self, latent_dim):
+        super().__init__()
+
+        self.gamma = nn.Linear(latent_dim, latent_dim)
+        self.beta = nn.Linear(latent_dim, latent_dim)
+
+        self.fusion = nn.Sequential(
+            nn.Linear(2 * latent_dim, latent_dim),
+            nn.LayerNorm(latent_dim),
+            nn.Tanh()
+        )
+
+    def forward(self, z):
+        z_p, z_e = z
+
+        gamma = 1.0 + self.gamma(z_p)
+        beta = self.beta(z_p)
+
+        z_e_mod = gamma * z_e + beta
+        zf = self.fusion(th.cat([z_p, z_e_mod], dim=-1))
+        return  zf
+
+
+def fusion_model(fusion_type, latent_dim):
+    if fusion_type == 'mlp':
+        return FusionMLP(latent_dim)
+    elif fusion_type == 'conv1d':
+        return FusionConv1d(latent_dim)
+    elif fusion_type == 'attention':
+        return CrossAttention(latent_dim)
+    else:
+        raise NotImplementedError(f"Fusion method ({fusion_type}) not found, "
+                                  "try with --fusion-mlp --fusion-conv1d "
+                                  "--fusion-attention")
 
 
 class ProprioceptiveEncoder(nn.Module):
@@ -379,28 +478,7 @@ class ProprioceptiveEncoder(nn.Module):
         self.fusion_type = None
         if fusion is not None:
             self.fusion_type = fusion
-            if fusion == 'linear':
-                self.fusion = nn.Sequential(
-                    nn.Conv1d(
-                        in_channels=self.latent_dim,
-                        out_channels=latent_dim,
-                        kernel_size=1,
-                        groups=latent_dim,
-                        bias=True
-                    ),
-                    nn.Flatten(start_dim=1),
-                    nn.LayerNorm(latent_dim),
-                    nn.Tanh()
-                )
-            elif fusion == 'attention':
-                self.fusion = nn.Sequential(
-                    CrossAttention(latent_dim),
-                    nn.Flatten(start_dim=1),
-                    nn.LayerNorm(latent_dim),
-                    nn.Tanh()
-                )
-            else:
-                raise NotImplementedError(f"Fusion method ({fusion}) not found, try with --fusion-linear --fusion-attention")
+            self.fusion = fusion_model(fusion, latent_dim)
             self.latent_dim = latent_dim
 
     def prop_observation(self, observation):
@@ -422,14 +500,8 @@ class ProprioceptiveEncoder(nn.Module):
         return self.prop_observation(observation), self.exte_observation(observation)
     
     def fuse_latent(self, z1, z2):
-        if self.fusion_type == 'linear':
-            zf = th.cat((z1, z2), dim=1)
-            # print('shape concat', zf.shape)
-            zf = zf.reshape(zf.shape[0], 2 * self.latent_dim, 1)
-            # print('shape reshape', zf.shape)
-            zf = self.fusion(zf)
-            # print('1d conv shape', zf.shape)
-        elif self.fusion_type == 'attention':
+        if self.fusion_type is not None:
+            # process with fusion model
             zf = self.fusion((z1, z2))
         else:
             # concat
@@ -473,7 +545,7 @@ class ProprioceptiveSPRDecoder(nn.Module):
         self.proprio_trans = nn.Sequential(*code_layers)
         out_latent = latent_dim
         self.must_fuse = fusion is None
-        if self.must_fuse: # no fusion performed on encoder
+        if self.must_fuse: # no fusion, already performed on encoder
             code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
             code_layers.insert(-1, nn.LayerNorm(latent_dim))
             self.extero_trans = nn.Sequential(*code_layers)
