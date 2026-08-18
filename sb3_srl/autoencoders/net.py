@@ -319,133 +319,11 @@ class NatureCNNEncoder(nn.Module):
         return self.forward_z(feats)
 
 
-class FusionMLP(nn.Module):
-    def __init__(self, latent_dim):
-        super().__init__()
-        self.fusion = nn.Sequential(
-            nn.Linear(2 * latent_dim, latent_dim, bias=True),
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
-        )
-
-    def forward(self, z):
-        zf = th.cat(z, dim=1)
-        zf = self.fusion(zf)
-        return zf
-
-
-class FusionConv1d(nn.Module):
-    def __init__(self, latent_dim):
-        super().__init__()
-        self.latent_dim = latent_dim
-        self.fusion = nn.Sequential(
-            nn.Conv1d(
-                in_channels=2 * latent_dim,
-                out_channels=latent_dim,
-                kernel_size=1,
-                groups=latent_dim,
-                bias=True
-            ),
-            nn.Flatten(start_dim=1),
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
-        )
-
-    def forward(self, z):
-        zf = th.cat(z, dim=1)
-        zf = zf.reshape(zf.shape[0], 2 * self.latent_dim, 1)
-        zf = self.fusion(zf)
-        return zf
-
-
-class CrossAttention(nn.Module):
-    def __init__(self, latent_dim):
-        super().__init__()
-        self.attention = nn.MultiheadAttention(
-            embed_dim=latent_dim,
-            num_heads=8,
-            batch_first=True
-        )
-        self.fusion = nn.Sequential(
-            nn.Flatten(start_dim=1),
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
-        )
-    
-    def forward(self, z):
-        latent1, latent2 = z
-        # [batch, latent_dim] → [batch, 1, latent_dim]
-        latent1 = latent1.unsqueeze(1)
-        # [batch, latent_dim] → [batch, latent_dim, 1]
-        latent2 = latent2.unsqueeze(1)
-
-        # latent1 attends to latent2
-        fused, _ = self.attention(latent1, latent2, latent2)
-        
-        return self.fusion(fused.transpose(1, 2))  # [batch, latent_dim, L]
-
-
-class GatedFusion(nn.Module):
-    def __init__(self, latent_dim):
-        super().__init__()
-        self.gate = nn.Sequential(
-            nn.Linear(latent_dim * 2, latent_dim),
-            nn.Sigmoid()
-        )
-        self.fusion = nn.Sequential(
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
-        )
-
-    def forward(self, z):
-        z1, z2 = z
-        g = self.gate(th.cat([z1, z2], dim=-1))
-        return self.fusion(g * z1 + (1 - g) * z2)
-
-
-class FiLMFusion(nn.Module):
-    def __init__(self, latent_dim):
-        super().__init__()
-
-        self.gamma = nn.Linear(latent_dim, latent_dim)
-        self.beta = nn.Linear(latent_dim, latent_dim)
-
-        self.fusion = nn.Sequential(
-            nn.Linear(2 * latent_dim, latent_dim),
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
-        )
-
-    def forward(self, z):
-        z_p, z_e = z
-
-        gamma = 1.0 + self.gamma(z_p)
-        beta = self.beta(z_p)
-
-        z_e_mod = gamma * z_e + beta
-        zf = self.fusion(th.cat([z_p, z_e_mod], dim=-1))
-        return  zf
-
-
-def fusion_model(fusion_type, latent_dim):
-    if fusion_type == 'mlp':
-        return FusionMLP(latent_dim)
-    elif fusion_type == 'conv1d':
-        return FusionConv1d(latent_dim)
-    elif fusion_type == 'attention':
-        return CrossAttention(latent_dim)
-    else:
-        raise NotImplementedError(f"Fusion method ({fusion_type}) not found, "
-                                  "try with --fusion-mlp --fusion-conv1d "
-                                  "--fusion-attention")
-
-
 class ProprioceptiveEncoder(nn.Module):
     def __init__(self,
                  vector_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256],
-                 fusion: Optional[str] = None,
                  prop_mask: list[bool] = [True, True, True, True, True, True,  # imu, gyro
                                           False, False, False, False, False, False,  # gps_pos, gps_vel
                                           False, False, False, False, False, False,  # target-sensing
@@ -474,12 +352,6 @@ class ProprioceptiveEncoder(nn.Module):
                 self.pixel_dim = latent_dim
             self.pixel = NatureCNNEncoder(pixel_shape, latent_dim=self.pixel_dim, features_dim=512)
             self.latent_dim += self.pixel_dim
-        # learned fusion bias weight
-        self.fusion_type = None
-        if fusion is not None:
-            self.fusion_type = fusion
-            self.fusion = fusion_model(fusion, latent_dim)
-            self.latent_dim = latent_dim
 
     def prop_observation(self, observation):
         if isinstance(observation, dict):
@@ -494,20 +366,15 @@ class ProprioceptiveEncoder(nn.Module):
         if len(observation.shape) == 3:
             observation = observation[:, -1].squeeze(1)
         return observation[:, self.exte_mask]
+    
+    @staticmethod
+    def split_observation_mask(observation, prop_mask):
+        return (observation[:, prop_mask],
+                observation[:, [not m for m in prop_mask]])
 
     def split_observation(self, observation):
         # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
         return self.prop_observation(observation), self.exte_observation(observation)
-    
-    def fuse_latent(self, z1, z2):
-        if self.fusion_type is not None:
-            # process with fusion model
-            zf = self.fusion((z1, z2))
-        else:
-            # concat
-            zf = th.cat((z1, z2), dim=1)
-        return zf
-        
 
     # def forward_quaternion(self, euler):
     #     return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
@@ -517,12 +384,12 @@ class ProprioceptiveEncoder(nn.Module):
         obs_prop, obs_exte = self.split_observation(obs)
         z_proprio = self.proprio(obs_prop)
         z_extero = self.extero(obs_exte)
-        z_stack = self.fuse_latent(z_proprio, z_extero)
-        if hasattr(self, 'pixel'):
-            z_pixel = self.pixel(obs['pixel'])
-            z_stack = th.cat((z_stack, z_pixel), dim=1)
+        # z_stack = self.fuse_latent(z_proprio, z_extero)
+        # if hasattr(self, 'pixel'):
+        #     z_pixel = self.pixel(obs['pixel'])
+        #     z_extero = th.cat((z_extero, z_pixel), dim=1)
 
-        return z_stack
+        return th.cat((z_proprio, z_extero), dim=1)
 
 
 class ProprioceptiveSPRDecoder(nn.Module):
@@ -532,7 +399,7 @@ class ProprioceptiveSPRDecoder(nn.Module):
                  action_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256],
-                 fusion: Optional[str] = None,
+                 with_fusion: bool = False,
                  prop_mask: list[bool] = [
                      True, True, True, True, True, True,  # imu, gyro
                      False, False, False, False, False, False,  # gps_pos, gps_vel
@@ -543,9 +410,10 @@ class ProprioceptiveSPRDecoder(nn.Module):
         code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
         code_layers.insert(-1, nn.LayerNorm(latent_dim))
         self.proprio_trans = nn.Sequential(*code_layers)
+        self.prop_mask = prop_mask
         out_latent = latent_dim
-        self.must_fuse = fusion is None
-        if self.must_fuse: # no fusion, already performed on encoder
+        self.dual_transition = not with_fusion
+        if self.dual_transition: # no fusion performed
             code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
             code_layers.insert(-1, nn.LayerNorm(latent_dim))
             self.extero_trans = nn.Sequential(*code_layers)
@@ -554,7 +422,7 @@ class ProprioceptiveSPRDecoder(nn.Module):
         self.projection = nn.Sequential(*proj_layers)
 
     def forward_z_hat(self, z, action):
-        if self.must_fuse:
+        if self.dual_transition:
             proprio_z, extero_z = z.chunk(2, dim=1)
             proprio_z_hat = self.proprio_trans(th.cat([proprio_z, action], dim=1))
             extero_z_hat = self.extero_trans(th.cat([extero_z, action], dim=1))

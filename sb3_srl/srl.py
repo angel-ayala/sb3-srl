@@ -31,6 +31,9 @@ class SRLPolicy:
         self.rep_model = instance_autoencoder(ae_type, ae_params)
         self.rep_model.adam_optimizer(ae_params['encoder_lr'],
                                       ae_params['decoder_lr'])
+        fusion_type = ae_params.get('fusion', None)
+        if fusion_type is not None:
+            self.rep_model.fuse_optimizer(lr_schedule(1))
         self.rep_model.set_stopper(ae_params['encoder_steps'])
         self.rep_model.fit_observation(self.observation_space)
         print('Using', self.rep_model)
@@ -67,7 +70,8 @@ class SRLAlgorithm:
         self.encoder_batch_norm_stats_target = get_parameters_by_name(self.policy.rep_model.encoder_target, ["running_"])
 
     def update_encoder_target(self):
-        polyak_update(self.policy.rep_model.encoder.parameters(), self.policy.rep_model.encoder_target.parameters(), self.policy.encoder_tau)
+        self.policy.rep_model.update_encoder_target(self.policy.encoder_tau)
+        # polyak_update(self.policy.rep_model.encoder.parameters(), self.policy.rep_model.encoder_target.parameters(), self.policy.encoder_tau)
         polyak_update(self.encoder_batch_norm_stats, self.encoder_batch_norm_stats_target, 1.0)
 
     def _excluded_save_params(self) -> list[str]:

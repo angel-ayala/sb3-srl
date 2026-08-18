@@ -112,8 +112,10 @@ def parse_srl_args(parser):
                          help='Use 1D convolution for Proprioceptive fusion.')
     arg_srl.add_argument("--fusion-attention", action='store_true',
                          help='Use Attention-based Proprioceptive fusion.')
-    arg_srl.add_argument("--fusion-mamba", action='store_true',
-                         help='Use Mamba model for Proprioceptive fusion.')
+    # arg_srl.add_argument("--fusion-mamba", action='store_true',
+    #                      help='Use Mamba model for Proprioceptive fusion.')
+    arg_srl.add_argument("--late-fusion", action='store_true',
+                         help='Process sensor fusion in downstream processes.')
     return arg_srl
 
 
@@ -158,15 +160,22 @@ def args2ae_config(args, env_params):
              False, False, False, False, False, False,  # target-sensing
              True, True, True, True],  # motors
         )
-        model_params['fusion'] = None
         if _args.get('fusion_mlp', False):
+            model_name += 'Fusion'
             model_params['fusion'] = 'mlp'
         if _args.get('fusion_conv1d', False):
+            model_name += 'Fusion'
             model_params['fusion'] = 'conv1d'
         if _args.get('fusion_attention', False):
+            model_name += 'Fusion'
             model_params['fusion'] = 'attention'
         if _args.get('fusion_mamba', False):
+            model_name += 'Fusion'
             model_params['fusion'] = 'mamba'
+        
+        if 'Fusion' in model_name:
+            model_params['late_fusion'] = _args.get('late_fusion', False)
+
     else:
         raise ValueError('SRL model not recognized...')
     
@@ -201,6 +210,13 @@ def args2logpath(args, algo, env_name=None):
         path_suffix += '-ispr-custom'
     if args.model_proprio:
         path_suffix += '-proprio'
+    # extra labels
+    if args.introspection_lambda != 0.:
+        path_suffix += '-intr'
+    if args.joint_optimization:
+        path_suffix += '-joint'
+    if args.use_stochastic:
+        path_suffix += '-stch'
     # fusion labels
     if args.fusion_mlp:
         path_suffix += '-fmlp'
@@ -208,13 +224,9 @@ def args2logpath(args, algo, env_name=None):
         path_suffix += '-fconv1d'
     if args.fusion_attention:
         path_suffix += '-fatt'
-    # extra labels
-    if args.introspection_lambda != 0.:
-        path_suffix += '-intr'
-    if args.use_stochastic:
-        path_suffix += '-stch'
-    if args.joint_optimization:
-        path_suffix += '-joint'
+
+    if args.late_fusion:
+        path_suffix += '_late'
 
     exp_name = f"{algo}{path_suffix}"
 

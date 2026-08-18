@@ -12,7 +12,9 @@ from .models import SelfPredictiveModel
 from .models import InfoSPRModel
 from .models import IntrospectiveInfoSPR
 from .models import ProprioceptiveModel
+from .models import ProprioceptiveFusionModel
 from .stochastic import InfoSPRStochasticModel
+from .stochastic import ProprioceptiveFusionStochasticModel
 from .stochastic import ProprioceptiveStochasticModel
 from .stochastic import ReconstructionStochasticModel
 

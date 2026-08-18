@@ -182,8 +182,12 @@ class SRLSAC(SAC, SRLAlgorithm):
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()
+                if hasattr(self.policy.rep_model, "fuse_optim_zero_grad"):
+                    self.policy.rep_model.fuse_optim_zero_grad()
                 critic_loss.backward() # Optimize the critics first
                 self.critic.optimizer.step()
+                if hasattr(self.policy.rep_model, "fuse_optim_step"):
+                    self.policy.rep_model.fuse_optim_step()
                 self.policy.rep_model.update_representation(rep_loss)
 
             # Compute actor loss
