@@ -724,6 +724,10 @@ class ProprioceptiveFusionModel(ProprioceptiveModel):
             polyak_update(self.fusion_r.parameters(),
                           self.fusion_r_target.parameters(),
                           tau)
+            if self.late_fusion:
+                polyak_update(self.fusion_q.parameters(),
+                              self.fusion_q_target.parameters(),
+                              tau)
 
     def fuse_optim_zero_grad(self):
         if self.fusion_type is not None and self.late_fusion:

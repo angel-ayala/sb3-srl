@@ -441,9 +441,10 @@ class ProprioceptiveFusionStochasticModel(ProprioceptiveStochasticModel):
             polyak_update(self.fusion_r.parameters(),
                           self.fusion_r_target.parameters(),
                           tau)
+        self.update_fusion_target(tau)
     
     def update_fusion_target(self, tau):
-        if self.fusion_type is not None:
+        if self.fusion_type is not None and self.late_fusion:
             polyak_update(self.fusion_q.parameters(),
                           self.fusion_q_target.parameters(),
                           tau)
