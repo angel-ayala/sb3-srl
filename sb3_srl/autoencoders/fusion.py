@@ -41,8 +41,12 @@ def fusion_model(fusion_type, latent_dim, need_stochastic=False):
 class FusionMLP(nn.Module):
     def __init__(self, latent_dim):
         super().__init__()
-        self.fusion = nn.Sequential(
-            nn.Linear(2 * latent_dim, latent_dim, bias=True),
+        self.fusion_layers = nn.Sequential(
+            nn.Linear(2 * latent_dim, 4 * latent_dim, bias=True),
+            nn.LeakyReLU(),
+            nn.Linear(4 * latent_dim, latent_dim, bias=True)
+        )
+        self.activation = nn.Sequential(
             nn.LayerNorm(latent_dim),
             nn.Tanh()
         )
@@ -52,29 +56,20 @@ class FusionMLP(nn.Module):
             zf = th.cat(z, dim=1)
         else:
             zf = z
-        zf = self.fusion(zf)
-        return zf
+        zf = self.fusion_layers(zf)
+        return self.activation(zf)
 
 
-class FusionMLPStochastic(nn.Module):
+class FusionMLPStochastic(FusionMLP):
     def __init__(self, latent_dim):
-        super().__init__()
-        self.fusion = nn.Sequential(
-            nn.Linear(2 * latent_dim, latent_dim, bias=True),
-            # nn.LayerNorm(latent_dim),
-            # nn.Tanh()
+        super().__init__(latent_dim)
+        self.activation = nn.Sequential(
+            nn.LeakyReLU(),
+            MeanVarHead(latent_dim, latent_dim)
         )
-        layers = [nn.LeakyReLU(),
-                  MeanVarHead(latent_dim, latent_dim)]
-        self.head_model = nn.Sequential(*layers)
 
     def forward(self, z):
-        if isinstance(z, tuple):
-            zf = th.cat(z, dim=1)
-        else:
-            zf = z
-        zf = self.fusion(zf)
-        mean, log_var = self.head_model(zf)
+        mean, log_var = super().forward(z)
         dist = create_dist(mean, log_var)
         return dist  # return distribution object by default
 
@@ -83,7 +78,7 @@ class FusionConv1d(nn.Module):
     def __init__(self, latent_dim):
         super().__init__()
         self.latent_dim = latent_dim
-        self.fusion = nn.Sequential(
+        self.fusion_layers = nn.Sequential(
             nn.Conv1d(
                 in_channels=2 * latent_dim,
                 out_channels=latent_dim,
@@ -92,6 +87,8 @@ class FusionConv1d(nn.Module):
                 bias=True
             ),
             nn.Flatten(start_dim=1),
+        )
+        self.activation = nn.Sequential(
             nn.LayerNorm(latent_dim),
             nn.Tanh()
         )
@@ -102,38 +99,20 @@ class FusionConv1d(nn.Module):
         else:
             zf = z
         zf = zf.reshape(zf.shape[0], 2 * self.latent_dim, 1)
-        zf = self.fusion(zf)
-        return zf
+        zf = self.fusion_layers(zf)
+        return self.activation(zf)
 
 
-class FusionConv1dStochastic(nn.Module):
+class FusionConv1dStochastic(FusionConv1d):
     def __init__(self, latent_dim):
-        super().__init__()
-        self.latent_dim = latent_dim
-        self.fusion = nn.Sequential(
-            nn.Conv1d(
-                in_channels=2 * latent_dim,
-                out_channels=latent_dim,
-                kernel_size=1,
-                groups=latent_dim,
-                bias=True
-            ),
-            nn.Flatten(start_dim=1),
-            # nn.LayerNorm(latent_dim),
-            # nn.Tanh()
+        super().__init__(latent_dim)
+        self.activation = nn.Sequential(
+            nn.LeakyReLU(),
+            MeanVarHead(latent_dim, latent_dim)
         )
-        layers = [nn.LeakyReLU(),
-                  MeanVarHead(latent_dim, latent_dim)]
-        self.head_model = nn.Sequential(*layers)
 
     def forward(self, z):
-        if isinstance(z, tuple):
-            zf = th.cat(z, dim=1)
-        else:
-            zf = z
-        zf = zf.reshape(zf.shape[0], 2 * self.latent_dim, 1)
-        zf = self.fusion(zf)
-        mean, log_var = self.head_model(zf)
+        mean, log_var = super().forward(z)
         dist = create_dist(mean, log_var)
         return dist  # return distribution object by default
 
@@ -193,7 +172,7 @@ class FusionCrossAttention(nn.Module):
             nn.LayerNorm(latent_dim),
             nn.Tanh()
         )
-    
+
     def forward(self, z):
         latent1, latent2 = z.chunk(2, dim=1)
         # [batch, latent_dim] → [batch, 1, latent_dim]
@@ -203,5 +182,5 @@ class FusionCrossAttention(nn.Module):
 
         # latent1 attends to latent2
         fused, _ = self.attention(latent1, latent2, latent2)
-        
+
         return self.fusion(fused.transpose(1, 2))  # [batch, latent_dim, L]

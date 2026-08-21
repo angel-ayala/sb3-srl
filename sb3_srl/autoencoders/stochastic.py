@@ -194,7 +194,7 @@ class ReconstructionStochasticModel(RepresentationModelStochastic):
             img = ImageLogger(img_grid, 'CHW')
             self.log("pixel_reconstruction", img)
         return loss
-    
+
 
 class InfoSPRStochasticModel(RepresentationModelStochastic):
     def __init__(self, *args, **kwargs):
@@ -238,7 +238,7 @@ class ProprioceptiveEncoderStochastic(ProprioceptiveEncoder):
         super(ProprioceptiveEncoderStochastic, self).__init__(
             vector_shape, latent_dim, layers_dim=layers_dim, prop_mask=prop_mask,
             pixel_shape=pixel_shape, pixel_dim=pixel_dim)
-        # remove deterministic encoder layers
+        # replace deterministic encoder heads
         del self.proprio.head_model
         del self.extero.head_model
 
@@ -250,17 +250,7 @@ class ProprioceptiveEncoderStochastic(ProprioceptiveEncoder):
             MeanVarHead(latent_dim, latent_dim))
 
     def forward(self, obs):
-        # forward features
-        obs_prop = self.prop_observation(obs)
-        obs_exte = self.exte_observation(obs)
-        z_proprio = self.proprio.forward_feats(obs_prop)
-        z_extero = self.extero.forward_feats(obs_exte)
-
-        # if hasattr(self, 'pixel'):
-        #     z_pixel = self.pixel(obs['pixel'])
-        #     z_stack = th.cat((z_stack, z_pixel), dim=1)
-        mu1, log_var1 = self.proprio.forward_z(z_proprio)
-        mu2, log_var2 = self.extero.forward_z(z_extero)
+        (mu1, log_var1), (mu2, log_var2) = super().forward(obs)
 
         mu_stack = th.cat((mu1, mu2), dim=1)
         log_var_stack = th.cat((log_var1, log_var2), dim=1)
@@ -294,8 +284,8 @@ class ProprioceptiveDecoderStochastic(ProprioceptiveSPRDecoder):
         mean, log_var = self.projection(z_code)
         dist = create_dist(mean, log_var)
         return dist  # return distribution object by default
-    
-    
+
+
 class ProprioceptiveStochasticModel(RepresentationModelStochastic):
     def __init__(self, *args, **kwargs):
         super(ProprioceptiveStochasticModel, self).__init__('Proprioception', *args, **kwargs)
@@ -357,6 +347,8 @@ class ProprioceptiveFusionStochasticModel(ProprioceptiveStochasticModel):
         del _kwargs['fusion']
         del _kwargs['late_fusion']
 
+        assert self.fusion_type is not None, "Fusion type cannot be None"
+
         RepresentationModelStochastic.__init__(self, "ProprioceptionFusion", *args, **_kwargs)
         assert not self.is_pixels or self.is_multimodal, "ProprioceptionFusionStochasticModel is not Pixel-based ready."
         # self.home_pos = th.FloatTensor([0., 0., 0.3])
@@ -366,8 +358,11 @@ class ProprioceptiveFusionStochasticModel(ProprioceptiveStochasticModel):
 
     def _setup_encoder(self):
         super()._setup_encoder()
-        if self.fusion_type is not None:
-            self.encoder.latent_dim = self.args['latent_dim']
+        # remove distribution output layer
+        del self.encoder.proprio.head_model
+        del self.encoder.extero.head_model
+
+        self.encoder.latent_dim = self.args['latent_dim']
         self._setup_fusion()
 
     def _setup_decoder(self):
@@ -375,21 +370,17 @@ class ProprioceptiveFusionStochasticModel(ProprioceptiveStochasticModel):
         del dec_args['state_shape']
         del dec_args['layers_filter']
 
-        if self.fusion_type is not None:
-            dec_args['with_fusion'] = True
+        dec_args['with_fusion'] = True
 
         self.decoder = ProprioceptiveDecoderStochastic(**dec_args)
         print(self.decoder)
-    
-    def _setup_fusion(self):
-        if self.fusion_type is None:
-            return
 
+    def _setup_fusion(self):
         self.fusion_r = fusion_model(self.fusion_type, self.args['latent_dim'], True)
         self.fusion_r_target = copy.deepcopy(self.fusion_r)
         self.fusion_r_target.train(False)
         print("Representation fusion:", self.fusion_r)
-        
+
         if self.late_fusion:
             self.fusion_q = fusion_model(self.fusion_type, self.args['latent_dim'], True)
             self.fusion_q_target = copy.deepcopy(self.fusion_q)
@@ -398,17 +389,16 @@ class ProprioceptiveFusionStochasticModel(ProprioceptiveStochasticModel):
 
     def to(self, device):
         super().to(device)
-        if self.fusion_type is not None:
-            self.fusion_r = self.fusion_r.to(device)
-            self.fusion_r_target = self.fusion_r_target.to(device)
+        self.fusion_r = self.fusion_r.to(device)
+        self.fusion_r_target = self.fusion_r_target.to(device)
 
-            if self.late_fusion:
-                self.fusion_q = self.fusion_q.to(device)
-                self.fusion_q_target = self.fusion_q_target.to(device)
+        if self.late_fusion:
+            self.fusion_q = self.fusion_q.to(device)
+            self.fusion_q_target = self.fusion_q_target.to(device)
 
     def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
-        if self.fusion_type is not None and not self.late_fusion:
+        if not self.late_fusion:
             enc_parameters = (list(self.encoder.parameters()) +
                               list(self.fusion_r.parameters()))
         else:
@@ -419,55 +409,66 @@ class ProprioceptiveFusionStochasticModel(ProprioceptiveStochasticModel):
 
     def dec_optimizer(self, decoder_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
-        if self.fusion_type is not None and self.late_fusion:
+        if self.late_fusion:
             dec_parameters = (list(self.decoder.parameters()) +
                               list(self.fusion_r.parameters()))
         else:
             dec_parameters = self.decoder.parameters()
         self.decoder_optim = optim_class(dec_parameters,
                                          lr=decoder_lr, **optim_kwargs)
-    
+
     def fuse_optimizer(self, fusion_lr, optim_class=th.optim.Adam,
                       **optim_kwargs):
-        if self.fusion_type is not None and self.late_fusion:
+        if self.late_fusion:
             print(f"Late sensor fusion Q lr: {fusion_lr}")
             self.fusion_optim = optim_class(self.fusion_q.parameters(),
                                              lr=fusion_lr, **optim_kwargs)
-        
 
     def update_encoder_target(self, tau):
         super().update_encoder_target(tau)
-        if self.fusion_type is not None:
-            polyak_update(self.fusion_r.parameters(),
-                          self.fusion_r_target.parameters(),
-                          tau)
         self.update_fusion_target(tau)
-    
+
     def update_fusion_target(self, tau):
-        if self.fusion_type is not None and self.late_fusion:
+        polyak_update(self.fusion_r.parameters(),
+                      self.fusion_r_target.parameters(),
+                      tau)
+        if self.late_fusion:
             polyak_update(self.fusion_q.parameters(),
                           self.fusion_q_target.parameters(),
                           tau)
 
+    def set_training_mode(self, mode: bool) -> None:
+        super().set_training_mode(mode)
+        self.fusion_r.train(mode)
+        if self.late_fusion:
+            self.fusion_q.train(mode)
+
+    def set_stopper(self, patience, threshold=0.):
+        # not required
+        pass
+
     def fuse_optim_zero_grad(self):
-        if self.fusion_type is not None and self.late_fusion:
+        if self.late_fusion:
             self.fusion_optim.zero_grad()
 
     def fuse_optim_step(self):
-        if self.fusion_type is not None and self.late_fusion:
+        if self.late_fusion:
             self.fusion_optim.step()
-    
+
+    def update_representation(self, loss):
+        self.fuse_optim_zero_grad()
+        super().update_representation(loss)
+        self.fuse_optim_step()
+
     def forward_z(self, observation, deterministic=False, use_grad=True):
-        # obs_z = self.encoder(observation)  # always deterministic
+        obs_z = self.encoder.forward_feats(observation)  # always deterministic
         # if self.is_multimodal and not isinstance(obs_z, dict):
         #     obs_z = {'pixel': obs_z}
-        obs_z = super().forward_z(observation, deterministic, use_grad)
-        if self.fusion_type is not None:
-            if self.late_fusion:
-                obs_z = self.fusion_q(obs_z)
-            else:
-                obs_z = self.fusion_r(obs_z)
-        
+        if self.late_fusion:
+            obs_z = self.fusion_q(obs_z)
+        else:
+            obs_z = self.fusion_r(obs_z)
+
         if deterministic:
             z = obs_z.mean
         else:
@@ -475,49 +476,27 @@ class ProprioceptiveFusionStochasticModel(ProprioceptiveStochasticModel):
         return th.tanh(z)
 
     def target_forward_z(self, observation, deterministic=False, use_grad=True):
-        # obs_z = self.encoder_target(observation)  # always deterministic
+        obs_z = self.encoder_target.forward_feats(observation)  # always deterministic
         # if self.is_multimodal and not isinstance(obs_z, dict):
         #     obs_z = {'pixel': obs_z}
-        obs_z = super().target_forward_z(observation, deterministic, use_grad)
-        if self.fusion_type is not None:
-            if self.late_fusion:
-                obs_z = self.fusion_q_target(obs_z)
-            else:
-                obs_z = self.fusion_r_target(obs_z)
-        
+        if self.late_fusion:
+            obs_z = self.fusion_q_target(obs_z)
+        else:
+            obs_z = self.fusion_r_target(obs_z)
+
         if deterministic:
             z = obs_z.mean
         else:
             z = obs_z.rsample() if use_grad else obs_z.sample()
         return th.tanh(z)
 
-    def set_training_mode(self, mode: bool) -> None:
-        super().set_training_mode(mode)
-        if self.fusion_type is not None:
-            self.fusion_r.train(mode)
-            if self.late_fusion:
-                self.fusion_q.train(mode)
-
-    def set_stopper(self, patience, threshold=0.):
-        # not required
-        pass
-    
-    def update_representation(self, loss):
-        self.fuse_optim_zero_grad()
-        super().update_representation(loss)
-        self.fuse_optim_step()
-
     def compute_representation_loss(self, observations, actions, next_observations):
         # Encode observations
-        # obs_z = super().forward_z(observations, False, True)
-        obs_z = self.encoder(observations).rsample()
-        if self.fusion_type is not None:
-            obs_z = self.fusion_r(obs_z).rsample()
+        obs_z = self.encoder.forward_feats(observations)
+        obs_z = self.fusion_r(obs_z).rsample()
         obs_z1_hat = self.decoder(obs_z, actions)
-        obs_z1 = self.encoder_target(next_observations)
-        # obs_z1 = super().target_forward_z(next_observations, False, False)
-        if self.fusion_type is not None:
-            obs_z1 = self.fusion_r_target(obs_z1.rsample())
+        obs_z1 = self.encoder_target.forward_feats(next_observations)
+        obs_z1 = self.fusion_r_target(obs_z1)
         # compare next_latent with transition
         kl_loss = D.kl.kl_divergence(obs_z1, obs_z1_hat).mean()
         self.log("kl_loss", kl_loss.item())
@@ -525,8 +504,10 @@ class ProprioceptiveFusionStochasticModel(ProprioceptiveStochasticModel):
 
     def __repr__(self):
         out_str = super().__repr__()
-        if self.fusion_type is not None and self.late_fusion:
-            out_str += "\n"
+        out_str += "\nFusionRep"
+        out_str += str(self.fusion_r)
+        if self.late_fusion:
+            out_str += "\nFusionQ"
             out_str += str(self.fusion_q)
         return out_str
 

@@ -32,7 +32,7 @@ class SRLTD3Policy(TD3Policy, SRLPolicy):
         kwargs['features_extractor_class'] = DictFlattenExtractor
         SRLPolicy.__init__(self, ae_config, encoder_tau)
         TD3Policy.__init__(self, *args, **kwargs)
-    
+
     def _build(self, lr_schedule):
         SRLPolicy._build(self, lr_schedule)
         TD3Policy._build(self, lr_schedule)

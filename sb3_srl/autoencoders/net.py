@@ -366,7 +366,7 @@ class ProprioceptiveEncoder(nn.Module):
         if len(observation.shape) == 3:
             observation = observation[:, -1].squeeze(1)
         return observation[:, self.exte_mask]
-    
+
     @staticmethod
     def split_observation_mask(observation, prop_mask):
         return (observation[:, prop_mask],
@@ -379,17 +379,28 @@ class ProprioceptiveEncoder(nn.Module):
     # def forward_quaternion(self, euler):
     #     return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
 
-    def forward(self, obs):
+    def forward_feats(self, obs):
         # forward features
         obs_prop, obs_exte = self.split_observation(obs)
-        z_proprio = self.proprio(obs_prop)
-        z_extero = self.extero(obs_exte)
-        # z_stack = self.fuse_latent(z_proprio, z_extero)
+        feats_proprio = self.proprio.forward_feats(obs_prop)
+        feats_extero = self.extero.forward_feats(obs_exte)
+        return feats_proprio, feats_extero
+
+    def forward_z(self, feats):
+        # forward heads
+        feats_proprio, feats_extero = feats
+        z_proprio = self.proprio.forward_z(feats_proprio)
+        z_extero = self.extero.forward_z(feats_extero)
+        return z_proprio, z_extero
+
+    def forward(self, obs):
+        feats = self.forward_feats(obs)
+        z_proprio, z_extero = self.forward_z(feats)
         # if hasattr(self, 'pixel'):
         #     z_pixel = self.pixel(obs['pixel'])
         #     z_extero = th.cat((z_extero, z_pixel), dim=1)
 
-        return th.cat((z_proprio, z_extero), dim=1)
+        return z_proprio, z_extero
 
 
 class ProprioceptiveSPRDecoder(nn.Module):
