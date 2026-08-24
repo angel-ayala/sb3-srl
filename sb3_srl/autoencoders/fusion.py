@@ -42,9 +42,7 @@ class FusionMLP(nn.Module):
     def __init__(self, latent_dim):
         super().__init__()
         self.fusion_layers = nn.Sequential(
-            nn.Linear(2 * latent_dim, 4 * latent_dim, bias=True),
-            nn.LeakyReLU(),
-            nn.Linear(4 * latent_dim, latent_dim, bias=True)
+            nn.Linear(2 * latent_dim, latent_dim, bias=True)
         )
         self.activation = nn.Sequential(
             nn.LayerNorm(latent_dim),
