@@ -110,7 +110,11 @@ def parse_srl_args(parser):
                          help='Use MLP for Proprioceptive fusion.')
     arg_srl.add_argument("--fusion-conv1d", action='store_true',
                          help='Use 1D convolution for Proprioceptive fusion.')
-    arg_srl.add_argument("--fusion-attention", action='store_true',
+    arg_srl.add_argument("--fusion-gated", action='store_true',
+                         help='Use Gated Proprioceptive fusion.')
+    arg_srl.add_argument("--fusion-film", action='store_true',
+                         help='Use FiLM Proprioceptive fusion.')
+    arg_srl.add_argument("--fusion-crossatt", action='store_true',
                          help='Use Attention-based Proprioceptive fusion.')
     # arg_srl.add_argument("--fusion-mamba", action='store_true',
     #                      help='Use Mamba model for Proprioceptive fusion.')
@@ -166,9 +170,15 @@ def args2ae_config(args, env_params):
         if _args.get('fusion_conv1d', False):
             model_name += 'Fusion'
             model_params['fusion'] = 'conv1d'
-        if _args.get('fusion_attention', False):
+        if _args.get('fusion_gated', False):
             model_name += 'Fusion'
-            model_params['fusion'] = 'attention'
+            model_params['fusion'] = 'gated'
+        if _args.get('fusion_film', False):
+            model_name += 'Fusion'
+            model_params['fusion'] = 'film'
+        if _args.get('fusion_crossatt', False):
+            model_name += 'Fusion'
+            model_params['fusion'] = 'crossatt'
         if _args.get('fusion_mamba', False):
             model_name += 'Fusion'
             model_params['fusion'] = 'mamba'
@@ -222,8 +232,12 @@ def args2logpath(args, algo, env_name=None):
         path_suffix += '-fmlp'
     if args.fusion_conv1d:
         path_suffix += '-fconv1d'
-    if args.fusion_attention:
-        path_suffix += '-fatt'
+    if args.fusion_gated:
+        path_suffix += '-fgated'
+    if args.fusion_film:
+        path_suffix += '-ffilm'
+    if args.fusion_crossatt:
+        path_suffix += '-fcrossatt'
 
     if args.late_fusion:
         path_suffix += '_late'

@@ -5,6 +5,8 @@ Created on Thu Feb  6 11:18:39 2025
 
 @author: angel
 """
+from .fusion import ProprioceptiveFusionModel
+from .fusion import ProprioceptiveFusionStochasticModel
 from .models import RepresentationModel
 from .models import ReconstructionModel
 from .models import ReconstructionDistModel
@@ -12,9 +14,7 @@ from .models import SelfPredictiveModel
 from .models import InfoSPRModel
 from .models import IntrospectiveInfoSPR
 from .models import ProprioceptiveModel
-from .models import ProprioceptiveFusionModel
 from .stochastic import InfoSPRStochasticModel
-from .stochastic import ProprioceptiveFusionStochasticModel
 from .stochastic import ProprioceptiveStochasticModel
 from .stochastic import ReconstructionStochasticModel
 

@@ -19,7 +19,6 @@ from stable_baselines3.common.utils import polyak_update
 from sb3_srl.introspection import IntrospectionBelief
 from sb3_srl.utils import EarlyStopper
 
-from .fusion import fusion_model
 from .net import NatureCNNEncoder
 from .net import PixelDecoder
 from .net import ProjectionN
@@ -31,7 +30,6 @@ from .net import VectorDecoder
 from .net import VectorEncoder
 from .net import weight_init
 from .utils import compute_mutual_information
-from .utils import dist2orientation
 from .utils import info_nce_loss
 from .utils import latent_l2_loss
 from .utils import obs2target_dist
@@ -593,161 +591,3 @@ class ProprioceptiveModel(RepresentationModel):
         loss = contrastive  # + latent_loss * self.decoder_lambda
         self.log("rep_loss", loss.item())
         return loss  # *2.
-
-
-class ProprioceptiveFusionModel(ProprioceptiveModel):
-    def __init__(self, *args, **kwargs):
-        self.fusion_type = kwargs.get('fusion', None)
-        self.late_fusion = kwargs.get('late_fusion', False)
-        _kwargs = kwargs.copy()
-        del _kwargs['fusion']
-        del _kwargs['late_fusion']
-        
-        assert self.fusion_type is not None, "Fusion type cannot be None"
-
-        super(ProprioceptiveFusionModel, self).__init__(*args, **_kwargs)
-
-    def _setup_fusion(self):
-        self.fusion_r = fusion_model(self.fusion_type, self.args['latent_dim'])
-        self.fusion_r_target = copy.deepcopy(self.fusion_r)
-        self.fusion_r_target.train(False)
-        print("Representation fusion:", self.fusion_r)
-
-        if self.late_fusion:
-            self.fusion_q = fusion_model(self.fusion_type, self.args['latent_dim'])
-            self.fusion_q_target = copy.deepcopy(self.fusion_q)
-            self.fusion_q_target.train(False)
-            print("Critic fusion:", self.fusion_q)
-
-    def _setup_encoder(self):
-        super()._setup_encoder()
-        self.encoder.latent_dim = self.args['latent_dim']
-        self._setup_fusion()
-
-    def _setup_decoder(self):
-        dec_args = self.args.copy()
-        del dec_args['state_shape']
-        del dec_args['layers_filter']
-
-        dec_args['with_fusion'] = True
-
-        self.decoder = ProprioceptiveSPRDecoder(**dec_args)
-        print(self.decoder)
-
-    def to(self, device):
-        super().to(device)
-        self.fusion_r = self.fusion_r.to(device)
-        self.fusion_r_target = self.fusion_r_target.to(device)
-
-        if self.late_fusion:
-            self.fusion_q = self.fusion_q.to(device)
-            self.fusion_q_target = self.fusion_q_target.to(device)
-
-    def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
-                      **optim_kwargs):
-        if not self.late_fusion:
-            enc_parameters = (list(self.encoder.parameters()) +
-                              list(self.fusion_r.parameters()))
-        else:
-            enc_parameters = self.encoder.parameters()
-
-        self.encoder_optim = optim_class(enc_parameters,
-                                         lr=encoder_lr, **optim_kwargs)
-
-    def dec_optimizer(self, decoder_lr, optim_class=th.optim.Adam,
-                      **optim_kwargs):
-        if self.late_fusion:
-            dec_parameters = (list(self.decoder.parameters()) +
-                              list(self.fusion_r.parameters()))
-        else:
-            dec_parameters = self.decoder.parameters()
-        self.decoder_optim = optim_class(dec_parameters,
-                                         lr=decoder_lr, **optim_kwargs)
-
-    def fuse_optimizer(self, fusion_lr, optim_class=th.optim.Adam,
-                      **optim_kwargs):
-        if self.late_fusion:
-            print(f"Late sensor fusion Q lr: {fusion_lr}")
-            self.fusion_optim = optim_class(self.fusion_q.parameters(),
-                                             lr=fusion_lr, **optim_kwargs)
-
-    def update_encoder_target(self, tau):
-        super().update_encoder_target(tau)
-        polyak_update(self.fusion_r.parameters(),
-                      self.fusion_r_target.parameters(),
-                      tau)
-        if self.late_fusion:
-            polyak_update(self.fusion_q.parameters(),
-                          self.fusion_q_target.parameters(),
-                          tau)
-
-    def fuse_optim_zero_grad(self):
-        if self.late_fusion:
-            self.fusion_optim.zero_grad()
-
-    def fuse_optim_step(self):
-        if self.late_fusion:
-            self.fusion_optim.step()
-
-    def forward_z(self, observation, deterministic=False, use_grad=True):
-        obs_z = self.encoder(observation)  # always deterministic
-        # if self.is_multimodal and not isinstance(obs_z, dict):
-        #     obs_z = {'pixel': obs_z}
-        if self.late_fusion:
-            obs_z = self.fusion_q(obs_z)
-        else:
-            obs_z = self.fusion_r(obs_z)
-        return obs_z
-
-    def target_forward_z(self, observation, deterministic=False, use_grad=True):
-        obs_z = self.encoder_target(observation)  # always deterministic
-        # if self.is_multimodal and not isinstance(obs_z, dict):
-        #     obs_z = {'pixel': obs_z}
-        if self.late_fusion:
-            obs_z = self.fusion_q_target(obs_z)
-        else:
-            obs_z = self.fusion_r_target(obs_z)
-        return obs_z
-
-    def set_training_mode(self, mode: bool) -> None:
-        super().set_training_mode(mode)
-        self.fusion_r.train(mode)
-        if self.late_fusion:
-            self.fusion_q.train(mode)
-
-    def set_stopper(self, patience, threshold=0.):
-        # not required
-        pass
-
-    def update_representation(self, loss):
-        self.fuse_optim_zero_grad()
-        super().update_representation(loss)
-        self.fuse_optim_step()
-
-    def compute_representation_loss(self, observations, actions, next_observations):
-        # Encode observations
-        obs_z = self.fusion_r(self.encoder(observations))
-        obs_z1_hat = self.decoder(obs_z, actions)
-        obs_z1 = self.fusion_r_target(self.encoder_target(next_observations))
-        # compare next_latent with transition
-        contrastive = info_nce_loss(obs_z1, obs_z1_hat)
-        # L2 over Z
-        latent_loss = latent_l2_loss(obs_z1)
-        self.log("l2_loss", latent_loss.item())
-        self.update_stopper(latent_loss)
-        loss = contrastive  # + latent_loss * self.decoder_lambda
-        self.log("rep_loss", loss.item())
-        return loss  # *2.
-
-    def __repr__(self):
-        out_str = super().__repr__()
-        out_str += "\nFusionRep"
-        out_str += str(self.fusion_r)
-        if self.late_fusion:
-            out_str += "\nFusionQ"
-            out_str += str(self.fusion_q)
-        return out_str
-
-    def __str__(self):
-        out_str = super().__str__()
-        return out_str + f"+({self.fusion_r.__class__.__name__}, late: {self.late_fusion})"

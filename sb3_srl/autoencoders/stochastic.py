@@ -7,7 +7,6 @@ Created on Sat May  3 12:09:51 2025
 """
 from typing import List, Optional
 
-import copy
 import torch as th
 from torch import nn
 import torch.distributions as D
@@ -15,11 +14,9 @@ import torch.nn.functional as F
 import torchvision
 
 from stable_baselines3.common.logger import Image as ImageLogger
-from stable_baselines3.common.utils import polyak_update
 
 from .dist import create_dist
 from .dist import MeanVarHead
-from .fusion import fusion_model
 from .models import RepresentationModel
 from .net import PixelEncoder
 from .net import PixelDecoder
@@ -337,180 +334,3 @@ class ProprioceptiveStochasticModel(RepresentationModelStochastic):
         kl_loss = D.kl.kl_divergence(obs_z1, obs_z1_hat).mean()
         self.log("kl_loss", kl_loss.item())
         return kl_loss  # *2.
-
-
-class ProprioceptiveFusionStochasticModel(ProprioceptiveStochasticModel):
-    def __init__(self, *args, **kwargs):
-        self.fusion_type = kwargs.get('fusion', None)
-        self.late_fusion = kwargs.get('late_fusion', False)
-        _kwargs = kwargs.copy()
-        del _kwargs['fusion']
-        del _kwargs['late_fusion']
-
-        assert self.fusion_type is not None, "Fusion type cannot be None"
-
-        RepresentationModelStochastic.__init__(self, "ProprioceptionFusion", *args, **_kwargs)
-        assert not self.is_pixels or self.is_multimodal, "ProprioceptionFusionStochasticModel is not Pixel-based ready."
-        # self.home_pos = th.FloatTensor([0., 0., 0.3])
-        # self.set_scaler((-1, 1))
-        # super(ProprioceptiveFusionStochasticModel, self).__init__(*args, **_kwargs)
-        # self.type = "ProprioceptionFusionStochastic"
-
-    def _setup_encoder(self):
-        super()._setup_encoder()
-        # remove distribution output layer
-        del self.encoder.proprio.head_model
-        del self.encoder.extero.head_model
-
-        self.encoder.latent_dim = self.args['latent_dim']
-        self._setup_fusion()
-
-    def _setup_decoder(self):
-        dec_args = self.args.copy()
-        del dec_args['state_shape']
-        del dec_args['layers_filter']
-
-        dec_args['with_fusion'] = True
-
-        self.decoder = ProprioceptiveDecoderStochastic(**dec_args)
-        print(self.decoder)
-
-    def _setup_fusion(self):
-        self.fusion_r = fusion_model(self.fusion_type, self.args['latent_dim'], True)
-        self.fusion_r_target = copy.deepcopy(self.fusion_r)
-        self.fusion_r_target.train(False)
-        print("Representation fusion:", self.fusion_r)
-
-        if self.late_fusion:
-            self.fusion_q = fusion_model(self.fusion_type, self.args['latent_dim'], True)
-            self.fusion_q_target = copy.deepcopy(self.fusion_q)
-            self.fusion_q_target.train(False)
-            print("Critic fusion:", self.fusion_q)
-
-    def to(self, device):
-        super().to(device)
-        self.fusion_r = self.fusion_r.to(device)
-        self.fusion_r_target = self.fusion_r_target.to(device)
-
-        if self.late_fusion:
-            self.fusion_q = self.fusion_q.to(device)
-            self.fusion_q_target = self.fusion_q_target.to(device)
-
-    def enc_optimizer(self, encoder_lr, optim_class=th.optim.Adam,
-                      **optim_kwargs):
-        if not self.late_fusion:
-            enc_parameters = (list(self.encoder.parameters()) +
-                              list(self.fusion_r.parameters()))
-        else:
-            enc_parameters = self.encoder.parameters()
-
-        self.encoder_optim = optim_class(enc_parameters,
-                                         lr=encoder_lr, **optim_kwargs)
-
-    def dec_optimizer(self, decoder_lr, optim_class=th.optim.Adam,
-                      **optim_kwargs):
-        if self.late_fusion:
-            dec_parameters = (list(self.decoder.parameters()) +
-                              list(self.fusion_r.parameters()))
-        else:
-            dec_parameters = self.decoder.parameters()
-        self.decoder_optim = optim_class(dec_parameters,
-                                         lr=decoder_lr, **optim_kwargs)
-
-    def fuse_optimizer(self, fusion_lr, optim_class=th.optim.Adam,
-                      **optim_kwargs):
-        if self.late_fusion:
-            print(f"Late sensor fusion Q lr: {fusion_lr}")
-            self.fusion_optim = optim_class(self.fusion_q.parameters(),
-                                             lr=fusion_lr, **optim_kwargs)
-
-    def update_encoder_target(self, tau):
-        super().update_encoder_target(tau)
-        self.update_fusion_target(tau)
-
-    def update_fusion_target(self, tau):
-        polyak_update(self.fusion_r.parameters(),
-                      self.fusion_r_target.parameters(),
-                      tau)
-        if self.late_fusion:
-            polyak_update(self.fusion_q.parameters(),
-                          self.fusion_q_target.parameters(),
-                          tau)
-
-    def set_training_mode(self, mode: bool) -> None:
-        super().set_training_mode(mode)
-        self.fusion_r.train(mode)
-        if self.late_fusion:
-            self.fusion_q.train(mode)
-
-    def set_stopper(self, patience, threshold=0.):
-        # not required
-        pass
-
-    def fuse_optim_zero_grad(self):
-        if self.late_fusion:
-            self.fusion_optim.zero_grad()
-
-    def fuse_optim_step(self):
-        if self.late_fusion:
-            self.fusion_optim.step()
-
-    def update_representation(self, loss):
-        self.fuse_optim_zero_grad()
-        super().update_representation(loss)
-        self.fuse_optim_step()
-
-    def forward_z(self, observation, deterministic=False, use_grad=True):
-        obs_z = self.encoder.forward_feats(observation)  # always deterministic
-        # if self.is_multimodal and not isinstance(obs_z, dict):
-        #     obs_z = {'pixel': obs_z}
-        if self.late_fusion:
-            obs_z = self.fusion_q(obs_z)
-        else:
-            obs_z = self.fusion_r(obs_z)
-
-        if deterministic:
-            z = obs_z.mean
-        else:
-            z = obs_z.rsample() if use_grad else obs_z.sample()
-        return th.tanh(z)
-
-    def target_forward_z(self, observation, deterministic=False, use_grad=True):
-        obs_z = self.encoder_target.forward_feats(observation)  # always deterministic
-        # if self.is_multimodal and not isinstance(obs_z, dict):
-        #     obs_z = {'pixel': obs_z}
-        if self.late_fusion:
-            obs_z = self.fusion_q_target(obs_z)
-        else:
-            obs_z = self.fusion_r_target(obs_z)
-
-        if deterministic:
-            z = obs_z.mean
-        else:
-            z = obs_z.rsample() if use_grad else obs_z.sample()
-        return th.tanh(z)
-
-    def compute_representation_loss(self, observations, actions, next_observations):
-        # Encode observations
-        obs_z = self.encoder.forward_feats(observations)
-        obs_z = self.fusion_r(obs_z).rsample()
-        obs_z1_hat = self.decoder(obs_z, actions)
-        obs_z1 = self.encoder_target.forward_feats(next_observations)
-        obs_z1 = self.fusion_r_target(obs_z1)
-        # compare next_latent with transition
-        kl_loss = D.kl.kl_divergence(obs_z1, obs_z1_hat).mean()
-        self.log("kl_loss", kl_loss.item())
-        return kl_loss  # *2.
-
-    def __repr__(self):
-        out_str = super().__repr__()
-        out_str += "\nFusionRep"
-        out_str += str(self.fusion_r)
-        if self.late_fusion:
-            out_str += "\nFusionQ"
-            out_str += str(self.fusion_q)
-        return out_str
-
-    def __str__(self):
-        out_str = super().__str__()
-        return out_str + f"+({self.fusion_r.__class__.__name__}, late: {self.late_fusion})"
