@@ -13,7 +13,6 @@ from torch.nn import functional as F
 
 from stable_baselines3.common.policies import ContinuousCritic
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.type_aliases import PyTorchObs
 from stable_baselines3.common.utils import polyak_update
 
 from stable_baselines3 import TD3
@@ -26,61 +25,57 @@ from sb3_srl.utils import DictFlattenExtractor
 
 
 class SRLTD3Policy(TD3Policy, SRLPolicy):
-    def __init__(self, *args,
-                 ae_config: dict = {},
-                 encoder_tau: float = 0.999, **kwargs):
+
+    def __init__(self, *args, srl_config=None, **kwargs):
         kwargs['features_extractor_class'] = DictFlattenExtractor
-        SRLPolicy.__init__(self, ae_config, encoder_tau)
-        TD3Policy.__init__(self, *args, **kwargs)
+        SRLPolicy.__init__(self, srl_config)
+        TD3Policy.__init__(self, *args, **kwargs,)
 
     def _build(self, lr_schedule):
-        SRLPolicy._build(self, lr_schedule)
+        SRLPolicy._build_srl(self)
         TD3Policy._build(self, lr_schedule)
+
+    def _predict(self, observation, deterministic=False,):
+        obs_z = self._predict_srl(observation, deterministic,)
+        return TD3Policy._predict(self, obs_z, deterministic,)
 
     def _get_constructor_parameters(self) -> dict[str, Any]:
         data = TD3Policy._get_constructor_parameters(self)
-        data.update(SRLPolicy._get_constructor_parameters(self))
+        data.update(SRLPolicy._get_srl_constructor_parameters(self))
         return data
+
+    def set_training_mode(self, mode: bool) -> None:
+        TD3Policy.set_training_mode(self, mode)
+        SRLPolicy.set_srl_training_mode(self, mode)
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
-        actor_kwargs["features_dim"] = self.latent_dim
+        actor_kwargs["features_dim"] = self.rep_model.latent_dim
         return Actor(**actor_kwargs).to(self.device)
 
     def make_critic(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> ContinuousCritic:
         critic_kwargs = self._update_features_extractor(self.critic_kwargs, features_extractor)
-        critic_kwargs["features_dim"] = self.latent_dim
+        critic_kwargs["features_dim"] = self.rep_model.latent_dim
         return ContinuousCritic(**critic_kwargs).to(self.device)
-
-    def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
-        obs_z = SRLPolicy._predict(self, observation, deterministic)
-        return TD3Policy._predict(self, obs_z, deterministic)
-
-    def set_training_mode(self, mode: bool) -> None:
-        TD3Policy.set_training_mode(self, mode)
-        SRLPolicy.set_training_mode(self, mode)
 
 
 class SRLTD3(TD3, SRLAlgorithm):
-    def __init__(self, *args, **kwargs):
-        TD3.__init__(self, *args, **kwargs)
-        # SRLAlgorithm.__init__(self, *args, **kwargs)
 
     def _create_aliases(self) -> None:
         TD3._create_aliases(self)
-        SRLAlgorithm._create_aliases(self)
+        SRLAlgorithm._create_srl_aliases(self)
 
     def _setup_model(self) -> None:
         TD3._setup_model(self)
-        SRLAlgorithm._setup_model(self)
+        SRLAlgorithm._setup_srl(self)
 
     def _excluded_save_params(self) -> list[str]:
         return TD3._excluded_save_params(self) + \
-            SRLAlgorithm._excluded_save_params(self)
+            SRLAlgorithm._excluded_srl_save_params(self)
 
     def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
         state_dicts1, extra1 = TD3._get_torch_save_params(self)
-        state_dicts2, extra2 = SRLAlgorithm._get_torch_save_params(self)
+        state_dicts2, extra2 = SRLAlgorithm._get_srl_torch_save_params(self)
         state_dicts = state_dicts1 + state_dicts2
         extra = extra1 + extra2
         return state_dicts, extra
@@ -88,7 +83,6 @@ class SRLTD3(TD3, SRLAlgorithm):
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
-        self.policy.logger_append(self.logger, 'train/')
 
         # Update learning rate according to lr schedule
         self._update_learning_rate([self.actor.optimizer, self.critic.optimizer])
@@ -130,34 +124,24 @@ class SRLTD3(TD3, SRLAlgorithm):
             adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
-            rep_loss = self.policy.rep_model.compute_representation_loss(
+            rep_loss = self.policy.compute_srl_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
-            if self.policy.rep_model.is_introspection:
-                rep_loss += self.policy.rep_model.compute_success_loss(
-                    obs_z, replay_data.actions, Q_min,
-                    next_v_values, replay_data.dones)
-            # if self.policy.is_multimodal:
-            #     rep_loss += self.policy.rep_model.compute_modal_loss(replay_data.observations)
 
             if self.policy.rep_model.joint_optimization:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
-                self.policy.rep_model.update_representation(critic_loss + rep_loss)
+                self.policy.update_srl(critic_loss + rep_loss)
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()
-                if hasattr(self.policy.rep_model, "fuse_optim_zero_grad"):
-                    self.policy.rep_model.fuse_optim_zero_grad()
                 critic_loss.backward() # Optimize the critics first
                 self.critic.optimizer.step()
-                if hasattr(self.policy.rep_model, "fuse_optim_step"):
-                    self.policy.rep_model.fuse_optim_step()
-                self.policy.rep_model.update_representation(rep_loss)
+                self.policy.rep_model.update_srl(rep_loss)
 
             # Delayed policy updates
             if self._n_updates % self.policy_delay == 0:
                 # update representations
-                self.update_encoder_target()
+                self.update_srl_target()
                 _obs_z = self.target_forward_z(replay_data.observations)
                 # Compute actor loss
                 actor_loss = -self.critic.q1_forward(_obs_z, self.actor(_obs_z)).mean()

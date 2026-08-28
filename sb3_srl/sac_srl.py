@@ -44,12 +44,12 @@ class SRLSACPolicy(SACPolicy, SRLPolicy):
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
-        actor_kwargs["features_dim"] = self.latent_dim
+        actor_kwargs["features_dim"] = self.rep_model.latent_dim
         return Actor(**actor_kwargs).to(self.device)
 
     def make_critic(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> ContinuousCritic:
         critic_kwargs = self._update_features_extractor(self.critic_kwargs, features_extractor)
-        critic_kwargs["features_dim"] = self.latent_dim
+        critic_kwargs["features_dim"] = self.rep_model.latent_dim
         return ContinuousCritic(**critic_kwargs).to(self.device)
 
     def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
@@ -62,8 +62,6 @@ class SRLSACPolicy(SACPolicy, SRLPolicy):
 
 
 class SRLSAC(SAC, SRLAlgorithm):
-    def __init__(self, *args, **kwargs):
-        SAC.__init__(self, *args, **kwargs)
 
     def _create_aliases(self) -> None:
         SAC._create_aliases(self)
@@ -87,7 +85,6 @@ class SRLSAC(SAC, SRLAlgorithm):
     def train(self, gradient_steps: int, batch_size: int = 64) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
-        self.policy.logger_append(self.logger, 'train/')
 
         # Update optimizers learning rate
         optimizers = [self.actor.optimizer, self.critic.optimizer]
@@ -166,35 +163,25 @@ class SRLSAC(SAC, SRLAlgorithm):
             adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
-            rep_loss = self.policy.rep_model.compute_representation_loss(
+            rep_loss = self.policy.compute_srl_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
-            if self.policy.rep_model.is_introspection:
-                rep_loss += self.policy.rep_model.compute_success_loss(
-                    obs_z, replay_data.actions, Q_min,
-                    next_v_values, replay_data.dones)
-            # if self.policy.rep_model.is_multimodal:
-            #     rep_loss += self.policy.rep_model.compute_modal_loss(replay_data.observations)
 
             if self.policy.rep_model.joint_optimization:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
-                self.policy.rep_model.update_representation(critic_loss + rep_loss)
+                self.policy.update_srl(critic_loss + rep_loss)
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()
-                if hasattr(self.policy.rep_model, "fuse_optim_zero_grad"):
-                    self.policy.rep_model.fuse_optim_zero_grad()
                 critic_loss.backward() # Optimize the critics first
                 self.critic.optimizer.step()
-                if hasattr(self.policy.rep_model, "fuse_optim_step"):
-                    self.policy.rep_model.fuse_optim_step()
                 self.policy.rep_model.update_representation(rep_loss)
 
             # Compute actor loss
             # Alternative: actor_loss = th.mean(log_prob - qf1_pi)
             # Min over all critic networks
             # Update target first
-            self.update_encoder_target()
+            self.update_srl_target()
             with th.no_grad():
                 _obs_z = self.target_forward_z(replay_data.observations)
             actions_pi, log_prob = self.actor.action_log_prob(_obs_z)

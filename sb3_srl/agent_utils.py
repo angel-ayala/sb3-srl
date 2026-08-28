@@ -73,38 +73,39 @@ def parse_srl_args(parser):
                          help='Encoder function Adam learning rate.')
     arg_srl.add_argument("--encoder-tau", type=float, default=0.999,
                          help='Encoder tau polyak update.')
-    arg_srl.add_argument("--encoder-steps", type=int, default=9000,
-                         help='Steps of no improvement to stop Encoder gradient.')
+    # arg_srl.add_argument("--encoder-steps", type=int, default=9000,
+    #                      help='Steps of no improvement to stop Encoder gradient.')
     arg_srl.add_argument("--decoder-lr", type=float, default=1e-3,
                          help='Decoder function Adam learning rate.')
     arg_srl.add_argument("--decoder-latent-lambda", type=float, default=1e-6,
                          help='Decoder regularization lambda value.')
-    arg_srl.add_argument("--decoder-weight-decay", type=float, default=1e-7,
-                         help='Decoder function Adam weight decay value.')
+    # arg_srl.add_argument("--decoder-weight-decay", type=float, default=1e-7,
+    #                      help='Decoder function Adam weight decay value.')
     arg_srl.add_argument("--representation-freq", type=int, default=1,
                          help='Steps interval for AE batch training.')
     arg_srl.add_argument("--encoder-only", action='store_true',
                          help='Whether if use the SRL loss.')
-    arg_srl.add_argument("--model-reconstruction", action='store_true',
-                         help='Whether if use the Reconstruction model.')
-    arg_srl.add_argument("--model-spr", action='store_true',
-                         help='Whether if use the SelfPredictive model.')
-    arg_srl.add_argument("--model-reconstruction-dist", action='store_true',
-                         help='Whether if use the ReconstructionDist reconstruction model.')
-    arg_srl.add_argument("--model-ispr", action='store_true',
-                         help='Whether if use the InfoNCE SimpleSPR version model.')
-    arg_srl.add_argument("--model-i2spr", action='store_true',
-                         help='Whether if use the Introspective InfoNCE SimpleSPR model.')
-    arg_srl.add_argument("--introspection-lambda", type=float, default=0,
-                         help='Introspection loss function lambda value, >0 to use introspection.')
     arg_srl.add_argument("--joint-optimization", action='store_true',
                          help='Whether if jointly optimize representation with RL updates.')
-    arg_srl.add_argument("--model-ispr-mumo", action='store_true',
-                         help='Whether if use the InfoNCE SimpleSPR Multimodal version model.')
-    arg_srl.add_argument("--model-proprio", action='store_true',
-                         help='Whether if use the Proprioceptive version model.')
     arg_srl.add_argument("--use-stochastic", action='store_true',
                          help='Whether if use the Stochastic version model.')
+
+    arg_srl.add_argument("--model-reconstruction", action='store_true',
+                         help='Whether if use the Reconstruction model.')
+    arg_srl.add_argument("--model-reconstruction-dist", action='store_true',
+                         help='Whether if use the ReconstructionDist reconstruction model.')
+    arg_srl.add_argument("--model-spr", action='store_true',
+                         help='Whether if use the SelfPredictive model.')
+    arg_srl.add_argument("--model-ispr", action='store_true',
+                         help='Whether if use the InfoNCE SimpleSPR version model.')
+    arg_srl.add_argument("--model-proprio", action='store_true',
+                         help='Whether if use the Proprioceptive version model.')
+    # arg_srl.add_argument("--model-ispr-mumo", action='store_true',
+    #                      help='Whether if use the InfoNCE SimpleSPR Multimodal version model.')
+    # arg_srl.add_argument("--model-i2spr", action='store_true',
+    #                      help='Whether if use the Introspective InfoNCE SimpleSPR model.')
+    # arg_srl.add_argument("--introspection-lambda", type=float, default=0,
+    #                      help='Introspection loss function lambda value, >0 to use introspection.')
 
     arg_srl.add_argument("--fusion-mlp", action='store_true',
                          help='Use MLP for Proprioceptive fusion.')
@@ -123,76 +124,184 @@ def parse_srl_args(parser):
     return arg_srl
 
 
-def args2ae_config(args, env_params):
+def args2encoder(args, env_params):
     _args = args
     if not isinstance(_args, dict):
         _args = vars(_args)
-    model_params = {
-        'action_shape': env_params['action_shape'],
+    params = {
         'state_shape': env_params['state_shape'],
         'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
-        'layers_filter': [_args.get('num_filters', 32)] * _args.get('num_layers', 2),
-        'encoder_lr': _args.get('encoder_lr', 1e-3),
-        'decoder_lr': _args.get('decoder_lr', 1e-3),
-        'encoder_only': _args.get('encoder_only', False),
-        'encoder_steps': _args.get('encoder_steps', 9000),
-        'decoder_lambda': _args.get('decoder_lambda', 1e-6),
-        'decoder_weight_decay': _args.get('decoder_weight_decay', 1e-7),
-        'joint_optimization': _args.get('joint_optimization', False),
-        'introspection_lambda': _args.get('introspection_lambda', 0.),
-        'is_pixels': _args.get('is_pixels', False),
-        'is_multimodal': _args.get('is_pixels', False) and _args.get('is_vector', False)
+    }
+
+    encoder = 'Vector'
+
+    if _args.get('model_proprio', False):
+        encoder = 'AdPu'
+        params['prop_mask'] = env_params['prop_mask']
+        params['pixel_shape'] = None
+        params['pixel_dim'] = None
+
+        #multimodal
+        if _args.get('is_pixels', False) and _args.get('is_vector', False):
+            params['state_shape'] = env_params['state_shape'][0]
+            params['pixel_shape'] = env_params['state_shape'][1]
+            params['pixel_dim'] = 50
+
+    elif _args.get('model_spr', False):
+        encoder = 'SimpleSPR'
+
+    elif _args.get('is_pixels', False):
+        encoder = 'NatureCNN'
+        del params['layers_dim']
+        params['is_pixels'] = True
+        params['features_dim'] = 512
+        params['normalized_image'] = False
+
+    return encoder, params
+
+
+def args2decoder(args, env_params):
+    _args = args
+    if not isinstance(_args, dict):
+        _args = vars(_args)
+    params = {
+        'state_shape': env_params['state_shape'],
+        'latent_dim': _args.get('latent_dim', 32),
+        'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
+    }
+
+    decoder = 'Vector'
+
+    if _args.get('model_proprio', False):
+        decoder = 'ProprioceptiveSPR'
+        params['action_shape'] = env_params['action_shape']
+        params['with_fusion'] = False
+        del params['state_shape']
+
+    elif _args.get('model_spr', False):
+        decoder = 'SPR'
+        if _args.get('is_pixels', False):
+            params['layers_dim'] = [params['layers_dim'][-1]] * (len(params['layers_dim']) - 1)
+        params['action_shape'] = env_params['action_shape']
+        del params['state_shape']
+
+    elif _args.get('model_ispr', False):
+        decoder = 'SimpleSPR'
+        if _args.get('is_pixels', False):
+            params['layers_dim'] = [params['layers_dim'][-1]] * (len(params['layers_dim']) - 1)
+        params['action_shape'] = env_params['action_shape']
+        del params['state_shape']
+
+    elif _args.get('is_pixels', False):
+        decoder = 'Pixel'
+        params['is_pixels'] = True
+        params['layers_dim'] = [params['layers_dim'][-1]] * (len(params['layers_dim']) - 1)
+
+    return decoder, params
+
+
+def args2pipeline(args, env_params):
+    _args = args
+    if not isinstance(_args, dict):
+        _args = vars(_args)
+
+    fusion, params = "identity", {}
+
+    if not _args.get('model_proprio', False):
+        return {'representation': [(fusion, params)]}
+
+    fusion = "concat"
+    params['latent_dim'] = _args.get('latent_dim', 32)
+
+    if _args.get('fusion_mlp', False):
+        fusion = 'mlp'
+    if _args.get('fusion_conv1d', False):
+        fusion = 'conv1d'
+    if _args.get('fusion_gated', False):
+        fusion = 'gated'
+    if _args.get('fusion_film', False):
+        fusion = 'film'
+    if _args.get('fusion_crossatt', False):
+        fusion = 'crossatt'
+    # if _args.get('fusion_mamba', False):
+    #     fusion = 'mamba'
+
+    fusion = "F:" + fusion
+    pipeline = {
+        'representation': [(fusion, params)]
         }
 
+    if _args.get('late_fusion', False):
+        pipeline['critic'] = [(fusion, params)]
+
+    return pipeline
+
+
+def args2srl_config(args, env_params):
+    _args = args
+    if not isinstance(_args, dict):
+        _args = vars(_args)
+
+    loss_name = None
+    model_name = None
+
+    encoder = args2encoder(args, env_params)
+
+    loss_args = {
+        'encoder_lr': _args.get('encoder_lr', 1e-3),
+        'encoder_tau': _args.get('encoder_tau', 0.999),
+        # 'encoder_steps': _args.get('encoder_steps', 9000),
+    }
+
+    decoder = None
+    loss_args['decoder_lr'] = None
+    if not _args.get('encoder_only', False):
+        decoder = args2decoder(args, env_params)
+        loss_args['decoder_lr'] = _args.get('decoder_lr', 1e-3)
+        loss_args['decoder_lambda'] = _args.get('decoder_lambda', 1e-6)
+        # loss_args['decoder_weight_decay'] = _args.get('decoder_weight_decay', 1e-7)
+
     if _args.get('model_reconstruction', False):
-        model_name = 'Reconstruction'
-    elif _args.get('model_spr', False):
-        model_name = 'SelfPredictive'
+        loss_name = 'Reconstruction'
+        model_name = loss_name
+
     elif _args.get('model_reconstruction_dist', False):
-        model_name = 'ReconstructionDist'
+        loss_name = 'ReconstructionDist'
+        model_name = loss_name
+
+    elif _args.get('model_spr', False):
+        loss_name = 'SelfPredictive'
+        model_name = loss_name
+
     elif _args.get('model_ispr', False):
-        model_name = 'InfoSPR'
-    elif _args.get('model_i2spr', False):
-        model_name = 'IntrospectiveInfoSPR'
+        loss_name = 'InfoSPR'
+        model_name = loss_name
+
+    # elif _args.get('model_i2spr', False):
+    #     loss_name = 'IntrospectiveInfoSPR'
+
     elif _args.get('model_proprio', False):
+        loss_name = 'InfoSPR'
         model_name = 'Proprioceptive'
-        model_params['prop_mask'] = _args.get(
-            'prop_mask', # defaults based on gym-webots-drone env
-            [True, True, True, True, True, True,  # imu, gyro
-             False, False, False, False, False, False,  # gps_pos, gps_vel
-             False, False, False, False, False, False,  # target-sensing
-             True, True, True, True],  # motors
-        )
-        if _args.get('fusion_mlp', False):
-            model_name += 'Fusion'
-            model_params['fusion'] = 'mlp'
-        if _args.get('fusion_conv1d', False):
-            model_name += 'Fusion'
-            model_params['fusion'] = 'conv1d'
-        if _args.get('fusion_gated', False):
-            model_name += 'Fusion'
-            model_params['fusion'] = 'gated'
-        if _args.get('fusion_film', False):
-            model_name += 'Fusion'
-            model_params['fusion'] = 'film'
-        if _args.get('fusion_crossatt', False):
-            model_name += 'Fusion'
-            model_params['fusion'] = 'crossatt'
-        if _args.get('fusion_mamba', False):
-            model_name += 'Fusion'
-            model_params['fusion'] = 'mamba'
-        
-        if 'Fusion' in model_name:
-            model_params['late_fusion'] = _args.get('late_fusion', False)
 
     else:
         raise ValueError('SRL model not recognized...')
-    
-    if _args.get('use_stochastic', False):
-        model_name += 'Stochastic'
 
-    return model_name, model_params
+    pipeline = args2pipeline(args, env_params)
+
+    srl_config = {
+        'encoder': encoder,
+        'loss': (loss_name, loss_args),
+        'pipeline': pipeline,
+        'decoder': decoder,
+        'is_stochastic': _args.get('use_stochastic', False),
+        'joint_optimization': _args.get('joint_optimization', False),
+    }
+
+    print(srl_config)
+
+    return {'model': model_name, 'config': srl_config}
 
 
 def args2logpath(args, algo, env_name=None):
@@ -208,21 +317,21 @@ def args2logpath(args, algo, env_name=None):
     # method labels
     if args.model_reconstruction:
         path_suffix += '-rec'
-    if args.model_spr:
-        path_suffix += '-spr'
     if args.model_reconstruction_dist:
         path_suffix += '-drec'
+    if args.model_spr:
+        path_suffix += '-spr'
     if args.model_ispr:
         path_suffix += '-ispr'
-    if args.model_i2spr:
-        path_suffix += '-i2spr'
-    if args.model_ispr_mumo:
-        path_suffix += '-ispr-custom'
+    # if args.model_i2spr:
+    #     path_suffix += '-i2spr'
+    # if args.model_ispr_mumo:
+    #     path_suffix += '-ispr-custom'
     if args.model_proprio:
         path_suffix += '-proprio'
     # extra labels
-    if args.introspection_lambda != 0.:
-        path_suffix += '-intr'
+    # if args.introspection_lambda != 0.:
+    #     path_suffix += '-intr'
     if args.joint_optimization:
         path_suffix += '-joint'
     if args.use_stochastic:
