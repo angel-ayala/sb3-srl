@@ -342,9 +342,17 @@ class RepresentationModel:
 
     def to(self, device):
         self.loss.to(device)
+        self.encoder_target.to(device)
+
+        self.pipeline.to(device)
+        self.pipeline_target.to(device)
 
     def set_training_mode(self, mode: bool) -> None:
         self.loss.train(mode)
+        self.encoder_target.train(mode)
+
+        self.pipeline.train(mode)
+        self.pipeline_target.train(mode)
 
     def forward_representation(self, observation, deterministic=False, use_grad=True, use_target=False, use_distribution=False):
         if use_target:
