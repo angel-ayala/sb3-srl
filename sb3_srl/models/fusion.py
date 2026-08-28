@@ -9,21 +9,21 @@ Created on Sat Aug 15 11:54:27 2026
 import torch as th
 from torch import nn
 
-from .base import FunctionBase
+from .base import BaseFunction
 
 
-class FusionBase(FunctionBase):
+class BaseFusion(BaseFunction):
     def __init__(self, latent_dim: int):
         super().__init__()
         self.latent_dim = latent_dim
 
 
-class Identity(FusionBase):
+class Identity(BaseFusion):
     def forward(self, x):
         return x
 
 
-class Concatenate(FusionBase):
+class Concatenate(BaseFusion):
     def forward(self, x):
         z = x
         if isinstance(z, tuple):
@@ -31,7 +31,7 @@ class Concatenate(FusionBase):
         return z
 
 
-class FusionMLP(FusionBase):
+class FusionMLP(BaseFusion):
     def __init__(self, latent_dim):
         super(FusionMLP, self).__init__(latent_dim)
         self.fusion_layers = nn.Sequential(
@@ -51,7 +51,7 @@ class FusionMLP(FusionBase):
         return self.activation(zf)
 
 
-class FusionConv1d(FusionBase):
+class FusionConv1d(BaseFusion):
     def __init__(self, latent_dim):
         super(FusionConv1d, self).__init__(latent_dim)
         self.fusion_layers = nn.Sequential(
@@ -79,7 +79,7 @@ class FusionConv1d(FusionBase):
         return self.activation(zf)
 
 
-class FusionGated(FusionBase):
+class FusionGated(BaseFusion):
     def __init__(self, latent_dim):
         super(FusionGated, self).__init__(latent_dim)
         self.gate = nn.Sequential(
@@ -103,7 +103,7 @@ class FusionGated(FusionBase):
         return self.activation(g * z1 + (1 - g) * z2)
 
 
-class FusionFiLM(FusionBase):
+class FusionFiLM(BaseFusion):
     def __init__(self, latent_dim):
         super(FusionFiLM, self).__init__(latent_dim)
 
@@ -129,7 +129,7 @@ class FusionFiLM(FusionBase):
         return self.activation(th.cat([z_p, z_e_mod], dim=-1))
 
 
-class CrossAttention(FusionBase):
+class CrossAttention(BaseFusion):
     def __init__(self, latent_dim):
         super(CrossAttention, self).__init__(latent_dim)
         self.attention = nn.MultiheadAttention(

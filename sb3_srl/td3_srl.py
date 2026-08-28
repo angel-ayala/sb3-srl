@@ -25,7 +25,7 @@ from sb3_srl.utils import DictFlattenExtractor
 
 
 class SRLTD3Policy(TD3Policy, SRLPolicy):
-
+    
     def __init__(self, *args, srl_config=None, **kwargs):
         kwargs['features_extractor_class'] = DictFlattenExtractor
         SRLPolicy.__init__(self, srl_config)
@@ -34,7 +34,7 @@ class SRLTD3Policy(TD3Policy, SRLPolicy):
     def _build(self, lr_schedule):
         SRLPolicy._build_srl(self)
         TD3Policy._build(self, lr_schedule)
-
+    
     def _predict(self, observation, deterministic=False,):
         obs_z = self._predict_srl(observation, deterministic,)
         return TD3Policy._predict(self, obs_z, deterministic,)
@@ -83,6 +83,7 @@ class SRLTD3(TD3, SRLAlgorithm):
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
+        self.policy.logger_append(self.logger, 'srl/')
 
         # Update learning rate according to lr schedule
         self._update_learning_rate([self.actor.optimizer, self.critic.optimizer])

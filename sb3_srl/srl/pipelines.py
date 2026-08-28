@@ -7,10 +7,10 @@ Created on Thu Aug 27 19:46:05 2026
 """
 from typing import Iterable
 
+import torch as th
 from torch import nn
 
-from ..models import FunctionBase
-from ..models import create_function_model
+from ..models import BaseFunction
 
 
 class TransformationBranch(nn.Module):
@@ -21,9 +21,12 @@ class TransformationBranch(nn.Module):
     with other branches.
     """
 
-    def __init__(self, stages: Iterable[FunctionBase]):
+    def __init__(self, stages: Iterable[BaseFunction]):
         super().__init__()
         self.stages = nn.ModuleList(stages)
+    
+    def add_function(self, stage: BaseFunction):
+        self.stages.append(stage)
 
     def forward(self, x):
         for stage in self.stages:
@@ -33,6 +36,20 @@ class TransformationBranch(nn.Module):
     def __repr__(self):
         stages = ">".join([m.__class__.__name__ for m in self.stages])
         return f"{self.__class__.__name__}(stages=[{stages}])"
+
+
+class StateRepresentation(BaseFunction):
+    def __init__(self, latent_dim: int):
+        super().__init__()
+
+        model = [nn.LayerNorm(latent_dim), nn.Tanh()]
+        self.model = nn.Sequential(*model)
+    
+    def forward(self, obs_feats):
+        feats = obs_feats
+        if isinstance(feats, tuple):
+            feats = th.cat(feats, dim=1)
+        return self.model(feats)
 
 
 class StatePipeline(nn.Module):
@@ -45,6 +62,7 @@ class StatePipeline(nn.Module):
                  configuration: dict
                  ):
         super().__init__()
+        # TODO: append representation layer to any defined branch
 
         self.branches = nn.ModuleDict(branches)
         self.configuration = configuration
@@ -71,39 +89,24 @@ class StatePipeline(nn.Module):
             for name, branch in self.branches.items()
         }
 
+    def forward_representation(self, obs_z, deterministic=False, use_grad=True):
+        return self.forward_branch("representation", obs_z)
+
+    def forward_critic(self, obs_z, deterministic=False, use_grad=True):
+        return self.forward_branch("critic", obs_z)
+
+    def forward_z(self, obs_z, deterministic=False, use_grad=True):
+        if self.n_branches == 1:
+            transform = self.forward_representation
+        else:
+            transform = self.forward_critic
+        return transform(obs_z, deterministic, use_grad)
+
     def __repr__(self) -> str:
+        configurations = {
+            name: branch
+            for name, branch in self.branches.items()
+            }
         return (
-            f"{self.__class__.__name__}(configuration=[{self.configuration}])"
+            f"{self.__class__.__name__}(configuration=[{configurations}])"
         )
-
-
-class StatePipelineFactory:
-
-    @staticmethod
-    def create(configuration: dict[str, list[tuple]]) -> StatePipeline:
-        """
-        A:XXXX -> Attention model
-        F:XXXX -> Fusion model
-        configuration:
-            {
-                "representation": ["A:CrossAtention", "F:MLP"],
-            }
-
-            {
-                "representation": ["A:CrossAtention", "F:MLP"],
-                "critic": ["A:CrossAtention", "F:MLP"],
-            }
-        """
-
-        branches = {}
-
-        for branch_name, models in configuration.items():
-            stages = []
-
-            for model_name, model_params in models:
-                stage = create_function_model(model_name, model_params)
-                stages.append(stage)
-
-            branches[branch_name] = TransformationBranch(stages)
-
-        return StatePipeline(branches, configuration)

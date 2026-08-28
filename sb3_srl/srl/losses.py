@@ -31,8 +31,8 @@ class ReconstructionLoss(RepresentationLoss):
 
     def compute_loss(self, observations, actions, next_observations):
         # Compute reconstruction loss
-        obs_z = self.encoder(observations)
-        rec_obs = self.decoder(obs_z)
+        obs_z = self.model.forward_representation(observations)
+        rec_obs = self.model.decode_latent(obs_z)
         # MSE loss reconstruction
         obs_norm = self.preprocess_reconstruction(observations)
         rec_loss = F.mse_loss(rec_obs, obs_norm)
@@ -74,10 +74,10 @@ class ReconstructionDistLoss(ReconstructionLoss):
 class SelfPredictiveLoss(RepresentationLoss):
 
     def forward_y_hat(self, observation, action):
-        z_t = self.encoder(observation)
+        z_t = self.model.forward_representation(observation)
         z_hat = self.decoder.transition(z_t, action)
         g0_out = self.encoder.projection(z_hat)
-        y_hat = self.decoder.predict(g0_out)
+        y_hat = self.model.decode_latent(g0_out)
         return y_hat
 
     def forward_y_curl(self, next_observations):
@@ -115,11 +115,9 @@ class InfoSPRLoss(RepresentationLoss):
 
     def compute_loss(self, observations, actions, next_observations):
         # Encode observations
-        obs_z = self.encoder(observations)
-        obs_z = self.model.forward_representation(obs_z)
+        obs_z = self.model.forward_representation(observations)
         obs_z1_hat = self.model.decode_latent(obs_z, actions)
-        obs_z1 = self.encoder_target(next_observations)
-        obs_z1 = self.model.forward_representation(obs_z1, use_target=True)
+        obs_z1 = self.model.forward_representation(next_observations, use_target=True)
         # compare next_latent with transition
         contrastive = info_nce_loss(obs_z1, obs_z1_hat)
         # L2 over Z

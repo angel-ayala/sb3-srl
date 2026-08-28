@@ -19,9 +19,79 @@ from stable_baselines3.common.utils import (
 
 from ..models import create_encoder
 from ..models import create_decoder
+from ..models import create_function_model
 from .representation import RepresentationModel
 from .losses import create_loss
-from .pipelines import StatePipelineFactory
+from .pipelines import StatePipeline, TransformationBranch, StateRepresentation
+
+
+class StatePipelineFactory:
+
+    @staticmethod
+    def add_representation(
+            branch: TransformationBranch,
+            latent_dim: int,
+            is_stochastic: bool = False
+        ) -> TransformationBranch:
+        
+        rep_pipeline = branch
+        
+        rep_pipeline.add_function(StateRepresentation(latent_dim))
+        return rep_pipeline
+    
+    @staticmethod
+    def create_branch(models: list[tuple]) -> TransformationBranch:
+        """
+        A:XXXX -> Attention model
+        F:XXXX -> Fusion model
+        models:[
+            "A:CrossAtention",
+            "F:MLP"
+        ]
+        """
+        stages = []
+
+        for model_name, model_params in models:
+            stage = create_function_model(model_name, model_params)
+            stages.append(stage)
+        return TransformationBranch(stages)
+    
+    @classmethod
+    def create_branches(cls, configuration: dict[str, list[tuple]]
+                        ) -> dict[str, TransformationBranch]:
+        """
+        "representation" -> Representation model related
+        "critic" -> Downstream task
+        configuration:
+            {
+                "representation": ["A:CrossAtention", "F:MLP"],
+            }
+        
+            {
+                "representation": ["A:CrossAtention", "F:MLP"],
+                "critic": ["A:CrossAtention", "F:MLP"],
+            }
+        """
+        branches = {}
+
+        for branch_name, models in configuration.items():
+            branches[branch_name] = cls.create_branch(models)
+
+        return branches
+
+    @classmethod
+    def create(cls, configuration: dict[str, list[tuple]],
+               latent_dim: int,
+               is_stochastic: bool = False) -> StatePipeline:
+
+        branches = cls.create_branches(configuration)
+
+        # add represention layer at the end
+        for name, branch in branches.items():
+            branches[name] = cls.add_representation(
+                branch, latent_dim, is_stochastic)
+
+        return StatePipeline(branches, configuration)
 
 
 class RepresentationFactory:
@@ -52,7 +122,11 @@ class RepresentationFactory:
         print('encoder', encoder)
         loss = cls.create_loss(model_config["loss"])
         print('loss', loss)
-        pipeline = StatePipelineFactory.create(model_config["pipeline"])
+        pipeline = StatePipelineFactory.create(
+            model_config["pipeline"],
+            encoder.latent_dim,
+            model_config["is_stochastic"]
+        )
         print('pipeline', pipeline)
         decoder = cls.create_decoder(model_config.get("decoder"))
         print('decoder', decoder)
@@ -243,8 +317,6 @@ class SRLAlgorithm:
             encoder_target,
             ["running_"],
         )
-
-        self.policy.logger_append(self.logger, "srl/")
 
     # ------------------------------------------------------------------
     # Target update

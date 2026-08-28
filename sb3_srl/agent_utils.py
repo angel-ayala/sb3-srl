@@ -63,6 +63,8 @@ def parse_srl_args(parser):
                          help='Whether if method is SRL-based or not.')
     arg_srl.add_argument("--latent-dim", type=int, default=32,
                          help='Number of features in the latent representation Z.')
+    arg_srl.add_argument("--feature-dim", type=int, default=32,
+                         help='Number of features from the encoder.')
     arg_srl.add_argument("--hidden-dim", type=int, default=512,
                          help='Number of units in the hidden layers.')
     arg_srl.add_argument("--num-filters", type=int, default=32,
@@ -130,6 +132,7 @@ def args2encoder(args, env_params):
         _args = vars(_args)
     params = {
         'state_shape': env_params['state_shape'],
+        'feature_dim': _args.get('feature_dim', 32),
         'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
@@ -205,13 +208,13 @@ def args2pipeline(args, env_params):
     _args = args
     if not isinstance(_args, dict):
         _args = vars(_args)
-
-    fusion, params = "identity", {}
+        
+    pipeline = {'representation': []}
 
     if not _args.get('model_proprio', False):
-        return {'representation': [(fusion, params)]}
+        return pipeline
 
-    fusion = "concat"
+    fusion, params = None, {}
     params['latent_dim'] = _args.get('latent_dim', 32)
 
     if _args.get('fusion_mlp', False):
@@ -227,10 +230,9 @@ def args2pipeline(args, env_params):
     # if _args.get('fusion_mamba', False):
     #     fusion = 'mamba'
 
-    fusion = "F:" + fusion
-    pipeline = {
-        'representation': [(fusion, params)]
-        }
+    if fusion is not None:
+        fusion = "F:" + fusion
+        pipeline['representation'].append((fusion, params))
 
     if _args.get('late_fusion', False):
         pipeline['critic'] = [(fusion, params)]

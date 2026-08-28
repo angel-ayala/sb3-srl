@@ -12,11 +12,16 @@ import torch as th
 from torch import nn
 import torch.nn.functional as F
 
-from .base import DecoderBase
+from .base import BaseFunction
 from .encoder import PixelEncoder
 
 
-class VectorDecoder(DecoderBase):
+class BaseDecoder(BaseFunction):
+    def forward(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+class VectorDecoder(BaseDecoder):
     def __init__(self,
                  state_shape: tuple,
                  latent_dim: int,
@@ -36,7 +41,7 @@ class VectorDecoder(DecoderBase):
         return self.head_model(z)
 
 
-class SPRDecoder(DecoderBase):
+class SPRDecoder(BaseDecoder):
     """VectorSPRDecoder for reconstruction function."""
     def __init__(self,
                  action_shape: tuple,
@@ -60,7 +65,7 @@ class SPRDecoder(DecoderBase):
         return self.predict(code)
 
 
-class SimpleSPRDecoder(DecoderBase):
+class SimpleSPRDecoder(BaseDecoder):
     """SimpleSPRDecoder as representation learning function."""
 
     def __init__(self,
@@ -95,7 +100,7 @@ class SimpleSPRDecoder(DecoderBase):
         return proj
 
 
-class PixelDecoder(DecoderBase):
+class PixelDecoder(BaseDecoder):
     def __init__(self, state_shape: tuple,
                  latent_dim: int,
                  layers_filter: List[int] = [32, 32]):
@@ -130,7 +135,7 @@ class PixelDecoder(DecoderBase):
         return obs
 
 
-class ProprioceptiveSPRDecoder(DecoderBase):
+class ProprioceptiveSPRDecoder(BaseDecoder):
     """ProprioceptiveSPRDecoder as representation learning function."""
 
     def __init__(self,
@@ -157,11 +162,13 @@ class ProprioceptiveSPRDecoder(DecoderBase):
             proprio_z, extero_z = z.chunk(2, dim=1)
             proprio_z_hat = self.proprio_trans(th.cat([proprio_z, action], dim=1))
             extero_z_hat = self.extero_trans(th.cat([extero_z, action], dim=1))
-            return th.cat([proprio_z_hat, extero_z_hat], dim=1)
+            return proprio_z_hat, extero_z_hat
         else:
             return self.proprio_trans(th.cat([z, action], dim=1))
 
     def forward_proj(self, code):
+        if isinstance(code, tuple):
+            code = th.cat(code, dim=1)
         return self.projection(code)
 
     def forward(self, z, action):

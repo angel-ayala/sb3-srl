@@ -14,7 +14,8 @@ import torch as th
 from torch import nn
 from stable_baselines3.common.utils import polyak_update
 
-from ..models.base import EncoderBase, DecoderBase
+from ..models.encoder import BaseEncoder
+from ..models.decoder import BaseDecoder
 from .pipelines import StatePipeline
 from .utils import compute_mutual_information
 
@@ -111,7 +112,6 @@ class RepresentationLoss:
             )
 
         if "decoder" in self._modules:
-
             decoder_params = [self._modules["decoder"]]
             if self.pipeline.n_branches > 1:
                 decoder_params.append(self._modules["pipeline"].branches["representation"])
@@ -221,11 +221,11 @@ class RepresentationLoss:
     # ------------------------------------------------------------------
 
     @property
-    def encoder(self) -> EncoderBase:
+    def encoder(self) -> BaseEncoder:
         return self._modules["encoder"]
 
     @property
-    def encoder_target(self) -> EncoderBase:
+    def encoder_target(self) -> BaseEncoder:
         return self.model.encoder_target
 
     @property
@@ -233,7 +233,7 @@ class RepresentationLoss:
         return self._modules["pipeline"]
 
     @property
-    def decoder(self) -> Optional[DecoderBase]:
+    def decoder(self) -> Optional[BaseDecoder]:
         return self._modules.get("decoder")
 
     # ------------------------------------------------------------------
@@ -251,7 +251,7 @@ class RepresentationLoss:
             module.to(device)
 
     def __repr__(self) -> str:
-        groups = ", ".join(self.optimizers.keys())
+        groups = ", ".join(self._parameter_groups.keys())
         return (
             f"{self.__class__.__name__}("
             f"optimizer_groups=[{groups}])"
@@ -263,10 +263,10 @@ class RepresentationModel:
 
     def __init__(self,
                  model_type: str,
-                 encoder: EncoderBase,
+                 encoder: BaseEncoder,
                  loss: RepresentationLoss,
                  pipeline: StatePipeline,
-                 decoder: Optional[DecoderBase],
+                 decoder: Optional[BaseDecoder],
                  joint_optimization: bool = False):
         self._log_fn = None
         self.type = model_type
@@ -343,34 +343,24 @@ class RepresentationModel:
     def set_training_mode(self, mode: bool) -> None:
         self.loss.train(mode)
 
-    def forward_representation(self, obs_z, deterministic=False, use_grad=True, use_target=False):
+    def forward_representation(self, observation, deterministic=False, use_grad=True, use_target=False):
         if use_target:
-            return self.pipeline_target.forward_branch("representation", obs_z)
+            obs_z = self.encoder_target(observation)  # always deterministic
+            transform = self.pipeline_target.forward_representation
         else:
-            return self.pipeline.forward_branch("representation", obs_z)
-
-    def forward_downstream(self, obs_z, deterministic=False, use_grad=True, use_target=False):
-        if use_target:
-            return self.pipeline_target.forward_branch("critic", obs_z)
-        else:
-            return self.pipeline.forward_branch("critic", obs_z)
+            obs_z = self.encoder(observation)  # always deterministic
+            transform = self.pipeline.forward_representation
+        return transform(obs_z, deterministic, use_grad)
 
     def forward_z(self, observation, deterministic=False, use_grad=True):
-        obs_z = self.encoder(observation)  # always deterministic
-        if self.pipeline.n_branches == 1:
-            return self.forward_representation(obs_z, deterministic, use_grad, False)
-        else:
-            return self.forward_downstream(obs_z, deterministic, use_grad, False)
+        obs_z = self.encoder(observation)
+        return self.pipeline.forward_z(obs_z, deterministic, use_grad)
 
     def target_forward_z(self, observation, deterministic=False, use_grad=True):
-        obs_z = self.encoder_target(observation)  # always deterministic
-        if self.pipeline_target.n_branches == 1:
-            return self.forward_representation(obs_z, deterministic, use_grad, True)
-        else:
-            return self.forward_downstream(obs_z, deterministic, use_grad, True)
+        obs_z = self.encoder_target(observation)
+        return self.pipeline_target.forward_z(obs_z, deterministic, use_grad)
 
     def decode_latent(self, obs_z, action=None):
-        obs_z = self.pipeline.forward_branch("representation", obs_z)
         if action is not None:
             return self.decoder(obs_z, action)
         else:

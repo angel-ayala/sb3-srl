@@ -6,7 +6,7 @@ Created on Wed Aug 26 12:21:28 2026
 @author: angel
 """
 
-from .base import FunctionBase
+from .base import BaseFunction
 
 from .encoder import (
     VectorEncoder,
@@ -60,7 +60,7 @@ FUSION = {
 }
 
 
-def create_encoder(name: str, params: dict) -> FunctionBase:
+def create_encoder(name: str, params: dict) -> BaseFunction:
     try:
         encoder_class = ENCODERS[name]
     except KeyError:
@@ -72,7 +72,7 @@ def create_encoder(name: str, params: dict) -> FunctionBase:
     return encoder_class(**params)
 
 
-def create_decoder(name: str, params: dict) -> FunctionBase:
+def create_decoder(name: str, params: dict) -> BaseFunction:
     try:
         decoder_class = DECODERS[name]
     except KeyError:
@@ -84,7 +84,7 @@ def create_decoder(name: str, params: dict) -> FunctionBase:
     return decoder_class(**params)
 
 
-def create_function_model(name: str, params: dict) -> FunctionBase:
+def create_function_model(name: str, params: dict) -> BaseFunction:
     assert ":" in name, f"Bad function model format: {name}"
     model_name = name.lower().split(":")
     model_type = model_name[0]
