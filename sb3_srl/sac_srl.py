@@ -85,7 +85,7 @@ class SRLSAC(SAC, SRLAlgorithm):
     def train(self, gradient_steps: int, batch_size: int = 64) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
-        self.policy.logger_append(self.logger, 'srl/')
+        self.policy.logger_append(self.logger, 'train_srl/')
 
         # Update optimizers learning rate
         optimizers = [self.actor.optimizer, self.critic.optimizer]

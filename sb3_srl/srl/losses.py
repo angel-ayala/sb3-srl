@@ -11,6 +11,7 @@ from __future__ import annotations
 from stable_baselines3.common.logger import Image as ImageLogger
 import torch as th
 import torchvision
+import torch.distributions as D
 from torch.nn import functional as F
 
 from .utils import info_nce_loss
@@ -117,16 +118,23 @@ class InfoSPRLoss(RepresentationLoss):
         # Encode observations
         obs_z = self.model.forward_representation(observations)
         obs_z1_hat = self.model.decode_latent(obs_z, actions)
-        obs_z1 = self.model.forward_representation(next_observations, use_target=True)
+        obs_z1 = self.model.forward_representation(next_observations, use_target=True, use_distribution=True)
         # compare next_latent with transition
-        contrastive = info_nce_loss(obs_z1, obs_z1_hat)
+        if self.model.is_stochastic:
+            # Kullback-Leibler
+            srl_loss = D.kl.kl_divergence(obs_z1, obs_z1_hat).mean()
+            self.log("kl_loss", srl_loss.item())
+        else:
+            # contrastive loss
+            srl_loss = info_nce_loss(obs_z1, obs_z1_hat)
+            self.log("info_nce_loss", srl_loss.item())
         # L2 over Z
-        latent_loss = latent_l2_loss(obs_z1)
+        latent_loss = latent_l2_loss(obs_z)
         self.log("l2_loss", latent_loss.item())
         # self.update_stopper(latent_loss)
-        loss = contrastive #+ latent_loss * self.decoder_lambda
-        self.log("rep_loss", loss.item())
-        return loss  # *2.
+        # loss = contrastive #+ latent_loss * self.decoder_lambda
+        # self.log("rep_loss", loss.item())
+        return srl_loss  # *2.
 
 
 SRL_LOSS = {

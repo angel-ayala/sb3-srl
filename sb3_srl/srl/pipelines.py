@@ -13,6 +13,25 @@ from torch import nn
 from ..models import BaseFunction
 
 
+class DeterministicRepresentation(BaseFunction):
+    def __init__(self, latent_dim: int):
+        super().__init__(latent_dim)
+
+        model = [nn.LayerNorm(latent_dim), nn.Tanh()]
+        self.model = nn.Sequential(*model)
+
+    def forward(self, obs_feats):
+        feats = obs_feats
+        if isinstance(obs_feats, tuple):
+            feats = th.cat(feats, dim=1)
+        return self.model(feats)
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(output_dim={self.output_dim})"
+        )
+
+
 class TransformationBranch(nn.Module):
     """
     One downstream processing path.
@@ -24,7 +43,7 @@ class TransformationBranch(nn.Module):
     def __init__(self, stages: Iterable[BaseFunction]):
         super().__init__()
         self.stages = nn.ModuleList(stages)
-    
+
     def add_function(self, stage: BaseFunction):
         self.stages.append(stage)
 
@@ -34,22 +53,10 @@ class TransformationBranch(nn.Module):
         return x
 
     def __repr__(self):
-        stages = ">".join([m.__class__.__name__ for m in self.stages])
-        return f"{self.__class__.__name__}(stages=[{stages}])"
-
-
-class StateRepresentation(BaseFunction):
-    def __init__(self, latent_dim: int):
-        super().__init__()
-
-        model = [nn.LayerNorm(latent_dim), nn.Tanh()]
-        self.model = nn.Sequential(*model)
-    
-    def forward(self, obs_feats):
-        feats = obs_feats
-        if isinstance(feats, tuple):
-            feats = th.cat(feats, dim=1)
-        return self.model(feats)
+        stages = "\n\t-> ".join([str(m) for m in self.stages])
+        return (
+            f"{self.__class__.__name__}(stages=[{stages}])"
+        )
 
 
 class StatePipeline(nn.Module):
@@ -59,13 +66,14 @@ class StatePipeline(nn.Module):
 
     def __init__(self,
                  branches: dict[str, TransformationBranch],
-                 configuration: dict
+                 configuration: dict,
+                 is_stochastic: bool = False
                  ):
         super().__init__()
-        # TODO: append representation layer to any defined branch
 
         self.branches = nn.ModuleDict(branches)
         self.configuration = configuration
+        self.is_stochastic = is_stochastic
 
     @property
     def n_branches(self):
@@ -75,38 +83,47 @@ class StatePipeline(nn.Module):
     def branch_keys(self):
         return list(self.branches.keys())
 
-    def forward_branch(self, branch: str, x):
+    def forward_branch(self, branch: str, obs_feats, deterministic=False, use_grad=True, use_distribution=False):
         try:
-            out = self.branches[branch](x)
+            out = self.branches[branch](obs_feats)
+
         except KeyError:
             print(f"No branch {branch} in pipeline")
             out = None
+
+        if self.is_stochastic and not use_distribution:
+            if deterministic:
+                z = out.mean
+            else:
+                z = out.rsample() if use_grad else out.sample()
+            return th.tanh(z)
+
         return out
 
     def forward(self, x):
         return {
-            name: branch(x)
+            name: self.forward_branch(name, x)
             for name, branch in self.branches.items()
         }
 
-    def forward_representation(self, obs_z, deterministic=False, use_grad=True):
-        return self.forward_branch("representation", obs_z)
+    def forward_representation(self, obs_feats, deterministic=False, use_grad=True, use_distribution=False):
+        return self.forward_branch("representation", obs_feats, deterministic, use_grad, use_distribution)
 
-    def forward_critic(self, obs_z, deterministic=False, use_grad=True):
-        return self.forward_branch("critic", obs_z)
+    def forward_critic(self, obs_feats, deterministic=False, use_grad=True, use_distribution=False):
+        return self.forward_branch("critic", obs_feats, deterministic, use_grad, use_distribution)
 
-    def forward_z(self, obs_z, deterministic=False, use_grad=True):
+    def forward_z(self, obs_feats, deterministic=False, use_grad=True):
         if self.n_branches == 1:
             transform = self.forward_representation
         else:
             transform = self.forward_critic
-        return transform(obs_z, deterministic, use_grad)
+        return transform(obs_feats, deterministic, use_grad)
 
     def __repr__(self) -> str:
         configurations = {
             name: branch
             for name, branch in self.branches.items()
-            }
+        }
         return (
             f"{self.__class__.__name__}(configuration=[{configurations}])"
         )

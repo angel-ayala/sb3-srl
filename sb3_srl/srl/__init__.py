@@ -22,7 +22,8 @@ from ..models import create_decoder
 from ..models import create_function_model
 from .representation import RepresentationModel
 from .losses import create_loss
-from .pipelines import StatePipeline, TransformationBranch, StateRepresentation
+from .pipelines import StatePipeline, TransformationBranch, DeterministicRepresentation
+from .stochastic import StochasticRepresentation, StochasticWrapper
 
 
 class StatePipelineFactory:
@@ -36,7 +37,12 @@ class StatePipelineFactory:
         
         rep_pipeline = branch
         
-        rep_pipeline.add_function(StateRepresentation(latent_dim))
+        if is_stochastic:
+            rep = StochasticRepresentation(latent_dim)
+        else:
+            rep = DeterministicRepresentation(latent_dim)
+        
+        rep_pipeline.add_function(rep)
         return rep_pipeline
     
     @staticmethod
@@ -91,7 +97,7 @@ class StatePipelineFactory:
             branches[name] = cls.add_representation(
                 branch, latent_dim, is_stochastic)
 
-        return StatePipeline(branches, configuration)
+        return StatePipeline(branches, configuration, is_stochastic)
 
 
 class RepresentationFactory:
@@ -130,6 +136,9 @@ class RepresentationFactory:
         print('pipeline', pipeline)
         decoder = cls.create_decoder(model_config.get("decoder"))
         print('decoder', decoder)
+        if model_config["is_stochastic"]:
+            decoder = StochasticWrapper(decoder)
+            print('decoderStochastic', decoder)
 
         model = RepresentationModel(
             model_type=srl_config["model"],

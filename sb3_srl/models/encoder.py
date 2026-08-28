@@ -16,7 +16,7 @@ from .base import BaseFunction
 
 class BaseEncoder(BaseFunction):
     def __init__(self, feature_dim: int, latent_dim: int):
-        super().__init__()
+        super().__init__(latent_dim)
         self.feature_dim = feature_dim
         self.latent_dim = latent_dim
 

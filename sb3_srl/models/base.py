@@ -18,4 +18,6 @@ class BaseFunction(nn.Module):
     No optimization logic belongs here.
     """
 
-    pass
+    def __init__(self, output_dim: int):
+        super().__init__()
+        self.output_dim = output_dim

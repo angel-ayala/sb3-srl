@@ -271,7 +271,6 @@ class RepresentationModel:
         self._log_fn = None
         self.type = model_type
         self.joint_optimization = joint_optimization
-        # self.decoder_lambda = None
 
         self.encoder = encoder
         self.decoder = decoder
@@ -284,6 +283,10 @@ class RepresentationModel:
     @property
     def latent_dim(self) -> int:
         return self.encoder.latent_dim
+
+    @property
+    def is_stochastic(self) -> int:
+        return self.pipeline.is_stochastic
 
     @property
     def encoder_optim(self):
@@ -343,14 +346,14 @@ class RepresentationModel:
     def set_training_mode(self, mode: bool) -> None:
         self.loss.train(mode)
 
-    def forward_representation(self, observation, deterministic=False, use_grad=True, use_target=False):
+    def forward_representation(self, observation, deterministic=False, use_grad=True, use_target=False, use_distribution=False):
         if use_target:
             obs_z = self.encoder_target(observation)  # always deterministic
             transform = self.pipeline_target.forward_representation
         else:
             obs_z = self.encoder(observation)  # always deterministic
             transform = self.pipeline.forward_representation
-        return transform(obs_z, deterministic, use_grad)
+        return transform(obs_z, deterministic, use_grad, use_distribution)
 
     def forward_z(self, observation, deterministic=False, use_grad=True):
         obs_z = self.encoder(observation)
