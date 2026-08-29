@@ -14,21 +14,13 @@ from .base import BaseFunction
 
 class BaseFusion(BaseFunction):
     def __init__(self, latent_dim: int):
-        super().__init__()
-        self.latent_dim = latent_dim
+        super().__init__(latent_dim)
 
-
-class Identity(BaseFusion):
-    def forward(self, x):
-        return x
-
-
-class Concatenate(BaseFusion):
-    def forward(self, x):
-        z = x
-        if isinstance(z, tuple):
-            z = th.cat(z, dim=1)
-        return z
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(input_dim={2*self.output_dim},"
+            f"output_dim={self.output_dim})"
+        )
 
 
 class FusionMLP(BaseFusion):
@@ -37,18 +29,13 @@ class FusionMLP(BaseFusion):
         self.fusion_layers = nn.Sequential(
             nn.Linear(2 * latent_dim, latent_dim, bias=True)
         )
-        self.activation = nn.Sequential(
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
-        )
 
     def forward(self, z):
         if isinstance(z, tuple):
             zf = th.cat(z, dim=1)
         else:
             zf = z
-        zf = self.fusion_layers(zf)
-        return self.activation(zf)
+        return self.fusion_layers(zf)
 
 
 class FusionConv1d(BaseFusion):
@@ -64,19 +51,14 @@ class FusionConv1d(BaseFusion):
             ),
             nn.Flatten(start_dim=1),
         )
-        self.activation = nn.Sequential(
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
-        )
 
     def forward(self, z):
         if isinstance(z, tuple):
             zf = th.cat(z, dim=1)
         else:
             zf = z
-        zf = zf.reshape(zf.shape[0], 2 * self.latent_dim, 1)
-        zf = self.fusion_layers(zf)
-        return self.activation(zf)
+        zf = zf.reshape(zf.shape[0], 2 * self.output_dim, 1)
+        return self.fusion_layers(zf)
 
 
 class FusionGated(BaseFusion):
@@ -85,10 +67,6 @@ class FusionGated(BaseFusion):
         self.gate = nn.Sequential(
             nn.Linear(latent_dim * 2, latent_dim),
             nn.Sigmoid()
-        )
-        self.activation = nn.Sequential(
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
         )
 
     def forward(self, z):
@@ -100,7 +78,7 @@ class FusionGated(BaseFusion):
             z_concat = z
 
         g = self.gate(z_concat)
-        return self.activation(g * z1 + (1 - g) * z2)
+        return g * z1 + (1 - g) * z2
 
 
 class FusionFiLM(BaseFusion):
@@ -110,10 +88,8 @@ class FusionFiLM(BaseFusion):
         self.gamma = nn.Linear(latent_dim, latent_dim)
         self.beta = nn.Linear(latent_dim, latent_dim)
 
-        self.activation = nn.Sequential(
-            nn.Linear(2 * latent_dim, latent_dim),
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
+        self.fusion_layers = nn.Sequential(
+            nn.Linear(2 * latent_dim, latent_dim)
         )
 
     def forward(self, z):
@@ -126,7 +102,7 @@ class FusionFiLM(BaseFusion):
         beta = self.beta(z_p)
 
         z_e_mod = gamma * z_e + beta
-        return self.activation(th.cat([z_p, z_e_mod], dim=-1))
+        return self.fusion_layers(th.cat([z_p, z_e_mod], dim=-1))
 
 
 class CrossAttention(BaseFusion):
@@ -136,10 +112,6 @@ class CrossAttention(BaseFusion):
             embed_dim=latent_dim,
             num_heads=4,
             batch_first=True
-        )
-        self.activation = nn.Sequential(
-            nn.LayerNorm(latent_dim),
-            nn.Tanh()
         )
 
     def forward(self, z):
@@ -156,4 +128,4 @@ class CrossAttention(BaseFusion):
         fused, _ = self.attention(latent1, latent2, latent2)
         fused = fused.squeeze(1)  # Back to [batch, latent_dim]
 
-        return self.activation(fused)
+        return fused

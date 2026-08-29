@@ -14,8 +14,8 @@ import torch as th
 from torch import nn
 from stable_baselines3.common.utils import polyak_update
 
-from ..models.encoder import BaseEncoder
-from ..models.decoder import BaseDecoder
+from ..models import BaseEncoder
+from ..models import BaseDecoder
 from .pipelines import StatePipeline
 from .utils import compute_mutual_information
 
@@ -282,7 +282,7 @@ class RepresentationModel:
 
     @property
     def latent_dim(self) -> int:
-        return self.encoder.latent_dim
+        return self.pipeline.latent_dim
 
     @property
     def is_stochastic(self) -> int:
@@ -298,7 +298,7 @@ class RepresentationModel:
 
     @property
     def downstream_optim(self):
-        return self.loss.optimizers["dowstream"]
+        return self.loss.optimizers["downstream"]
 
     def set_logger(self, logger_function, tag_prefix=''):
         # Expects a SB3 logger from algorithm
@@ -343,8 +343,6 @@ class RepresentationModel:
     def to(self, device):
         self.loss.to(device)
         self.encoder_target.to(device)
-
-        self.pipeline.to(device)
         self.pipeline_target.to(device)
 
     def set_training_mode(self, mode: bool) -> None:

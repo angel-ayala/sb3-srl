@@ -24,7 +24,8 @@ class DeterministicRepresentation(BaseFunction):
         feats = obs_feats
         if isinstance(obs_feats, tuple):
             feats = th.cat(feats, dim=1)
-        return self.model(feats)
+        z = self.model(feats)
+        return z
 
     def __repr__(self):
         return (
@@ -43,9 +44,11 @@ class TransformationBranch(nn.Module):
     def __init__(self, stages: Iterable[BaseFunction]):
         super().__init__()
         self.stages = nn.ModuleList(stages)
+        self.output_dim = stages[-1].output_dim
 
     def add_function(self, stage: BaseFunction):
         self.stages.append(stage)
+        self.output_dim = stage.output_dim
 
     def forward(self, x):
         for stage in self.stages:
@@ -53,9 +56,9 @@ class TransformationBranch(nn.Module):
         return x
 
     def __repr__(self):
-        stages = "\n\t-> ".join([str(m) for m in self.stages])
+        stages = "\n -> ".join([str(m) for m in self.stages])
         return (
-            f"{self.__class__.__name__}(stages=[{stages}])"
+            f"{self.__class__.__name__}(stages=[\n -> {stages}\n])"
         )
 
 
@@ -83,13 +86,17 @@ class StatePipeline(nn.Module):
     def branch_keys(self):
         return list(self.branches.keys())
 
+    @property
+    def latent_dim(self):
+        return self.branches["representation"].output_dim
+
     def forward_branch(self, branch: str, obs_feats, deterministic=False, use_grad=True, use_distribution=False):
         try:
             out = self.branches[branch](obs_feats)
 
         except KeyError:
             print(f"No branch {branch} in pipeline")
-            out = None
+            return None
 
         if self.is_stochastic and not use_distribution:
             if deterministic:

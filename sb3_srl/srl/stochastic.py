@@ -12,6 +12,7 @@ import torch.distributions as D
 import torch.nn.functional as F
 
 from ..models import BaseFunction
+from ..models import BaseDecoder
 
 
 def normal_independent_dist(mean, log_var):
@@ -64,11 +65,19 @@ class StochasticWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.head_model = StochasticRepresentation(model.output_dim, pre_act)
+        self.replaced_head = False
+        if isinstance(model, BaseDecoder):
+            del self.model.projection
+            self.model.projection = self.head_model
+            self.replaced_head = True
 
     def forward(self, *args, **kwargs) -> D:
         if self.model is None:
             raise NotImplementedError("No deterministic backbone was defined")
         obs_z = self.model(*args, **kwargs)
+        if self.replaced_head:
+            return obs_z
+
         dist = self.head_model(obs_z)
         return dist  # return distribution object by default
 

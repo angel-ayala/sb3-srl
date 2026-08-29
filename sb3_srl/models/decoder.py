@@ -38,10 +38,10 @@ class VectorDecoder(BaseDecoder):
             layers.insert(-1, nn.ConvTranspose1d(layers_dim[0], state_shape[0],
                                                  kernel_size=state_shape[-1]))
             layers.insert(-1, nn.Unflatten(2, (1, layers_dim[-1])))
-        self.head_model = nn.Sequential(*layers)
+        self.projection = nn.Sequential(*layers)
 
     def forward(self, z):
-        return self.head_model(z)
+        return self.projection(z)
 
 
 class SPRDecoder(BaseDecoder):
@@ -53,14 +53,14 @@ class SPRDecoder(BaseDecoder):
         super(SPRDecoder, self).__init__(latent_dim)
         layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, False, True)
         self.code = nn.Sequential(*layers)
-        self.pred = nn.Linear(latent_dim, latent_dim)
+        self.projection = nn.Linear(latent_dim, latent_dim)
 
     def transition(self, z, action):
         h_fc = self.code(th.cat([z, action], dim=1))
         return th.tanh(h_fc)
 
     def predict(self, z_prj):
-        h_fc = self.pred(z_prj)
+        h_fc = self.projection(z_prj)
         return h_fc
 
     def forward(self, z, action):

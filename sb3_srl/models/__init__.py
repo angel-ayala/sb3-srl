@@ -9,12 +9,14 @@ Created on Wed Aug 26 12:21:28 2026
 from .base import BaseFunction
 
 from .encoder import (
+    BaseEncoder,
     VectorEncoder,
     NatureCNNEncoder,
     AdPuEncoder,
     SimpleSPREncoder
 )
 from .decoder import (
+    BaseDecoder,
     VectorDecoder,
     PixelDecoder,
     ProprioceptiveSPRDecoder,
@@ -22,8 +24,6 @@ from .decoder import (
     SimpleSPRDecoder
 )
 from .fusion import (
-    Identity,
-    Concatenate,
     FusionMLP,
     FusionConv1d,
     FusionGated,
@@ -50,8 +50,6 @@ DECODERS = {
 
 
 FUSION = {
-    "identity": Identity,
-    "concat": Concatenate,
     "mlp": FusionMLP,
     "conv1d": FusionConv1d,
     "gated": FusionGated,
@@ -60,7 +58,7 @@ FUSION = {
 }
 
 
-def create_encoder(name: str, params: dict) -> BaseFunction:
+def create_encoder(name: str, params: dict) -> BaseEncoder:
     try:
         encoder_class = ENCODERS[name]
     except KeyError:
@@ -72,7 +70,7 @@ def create_encoder(name: str, params: dict) -> BaseFunction:
     return encoder_class(**params)
 
 
-def create_decoder(name: str, params: dict) -> BaseFunction:
+def create_decoder(name: str, params: dict) -> BaseDecoder:
     try:
         decoder_class = DECODERS[name]
     except KeyError:

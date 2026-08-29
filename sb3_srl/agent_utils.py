@@ -235,7 +235,7 @@ def args2pipeline(args, env_params):
         pipeline['representation'].append((fusion, params))
 
     if _args.get('late_fusion', False):
-        pipeline['critic'] = [(fusion, params)]
+        pipeline['critic'] = pipeline['representation'].copy()
 
     return pipeline
 
