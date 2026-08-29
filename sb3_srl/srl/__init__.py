@@ -336,24 +336,6 @@ class SRLAlgorithm:
         )
 
     # ------------------------------------------------------------------
-    # Representation training
-    # ------------------------------------------------------------------
-
-    def train_representation(self, observations, actions, next_observations
-                             ) -> th.Tensor:
-        """
-        Execute one representation-learning step.
-
-        The RepresentationModel/RepresentationLoss owns the
-        representation optimization.
-        """
-        return self.policy.rep_model.train_step(
-            observations,
-            actions,
-            next_observations,
-        )
-
-    # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
 

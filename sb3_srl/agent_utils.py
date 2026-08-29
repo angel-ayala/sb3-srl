@@ -301,8 +301,6 @@ def args2srl_config(args, env_params):
         'joint_optimization': _args.get('joint_optimization', False),
     }
 
-    print(srl_config)
-
     return {'model': model_name, 'config': srl_config}
 
 
