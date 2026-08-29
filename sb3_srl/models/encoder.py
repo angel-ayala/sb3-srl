@@ -23,11 +23,8 @@ class BaseEncoder(BaseFunction):
     def forward_feats(self, observation):
         raise NotImplementedError
 
-    def forward_z(self, feats):
-        raise NotImplementedError
-
     def forward(self, observation):
-        return self.forward_z(self.forward_feats(observation))
+        return self.forward_feats(observation)
 
 
 class VectorEncoder(BaseEncoder):
@@ -44,19 +41,13 @@ class VectorEncoder(BaseEncoder):
                                   kernel_size=state_shape[-1])
             feats.insert(1, nn.Flatten(start_dim=1))
         self.feats_model = nn.Sequential(*feats)
-        
+
         head = [nn.LeakyReLU(), nn.Linear(feature_dim, latent_dim, bias=True)]
         self.head_model = nn.Sequential(*head)
 
     def forward_feats(self, obs):
-        return self.feats_model(obs)
-
-    def forward_z(self, feats):
+        feats = self.feats_model(obs)
         return self.head_model(feats)
-
-    def forward(self, obs):
-        feats = self.forward_feats(obs)
-        return self.forward_z(feats)
 
 
 class SimpleSPREncoder(BaseEncoder):
@@ -68,7 +59,7 @@ class SimpleSPREncoder(BaseEncoder):
                  out_act: nn.Module = nn.Tanh()):
         super(SimpleSPREncoder, self).__init__(feature_dim, latent_dim)
         self.feats_model = base_encoder
-        self.projection = nn.Sequential(
+        self.head_model = nn.Sequential(
             nn.Linear(feature_dim, hidden_dim),
             nn.LeakyReLU(),
             nn.Linear(hidden_dim, latent_dim),
@@ -76,14 +67,8 @@ class SimpleSPREncoder(BaseEncoder):
         )
 
     def forward_feats(self, obs):
-        return self.feats_model(obs)
-
-    def forward_z(self, feats):
-        return self.projection(feats)
-
-    def forward(self, obs):
-        feats = self.forward_feats(obs)
-        return self.forward_z(feats)
+        feats = self.feats_model(obs)
+        return self.head_model(feats)
 
 
 class NatureCNNEncoder(BaseEncoder):
@@ -122,14 +107,8 @@ class NatureCNNEncoder(BaseEncoder):
     def forward_feats(self, observations: th.Tensor) -> th.Tensor:
         if not self.normalized_image:
             observations = observations.float() / 255.
-        return self.feats_model(observations.float())
-
-    def forward_z(self, feats: th.Tensor) -> th.Tensor:
+        feats = self.feats_model(observations.float())
         return self.head_model(feats)
-
-    def forward(self, observations: th.Tensor) -> th.Tensor:
-        feats = self.forward_feats(observations)
-        return self.forward_z(feats)
 
 
 class PixelEncoder(BaseEncoder):
@@ -162,14 +141,8 @@ class PixelEncoder(BaseEncoder):
         self.head_model = nn.Sequential(*head_layers)
 
     def forward_feats(self, obs):
-        return self.feats_model(obs.float() / 255.)
-
-    def forward_z(self, feats):
+        feats = self.feats_model(obs.float() / 255.)
         return self.head_model(feats.view(feats.size(0), -1))
-
-    def forward(self, obs):
-        feats = self.forward_feats(obs)
-        return self.forward_z(feats)
 
 
 class AdPuEncoder(BaseEncoder):
@@ -236,22 +209,6 @@ class AdPuEncoder(BaseEncoder):
     def forward_feats(self, obs):
         # forward features
         obs_prop, obs_exte = self.split_observation(obs)
-        feats_proprio = self.proprio.forward_feats(obs_prop)
-        feats_extero = self.extero.forward_feats(obs_exte)
+        feats_proprio = self.proprio(obs_prop)
+        feats_extero = self.extero(obs_exte)
         return feats_proprio, feats_extero
-
-    def forward_z(self, feats):
-        # forward heads
-        feats_proprio, feats_extero = feats
-        z_proprio = self.proprio.forward_z(feats_proprio)
-        z_extero = self.extero.forward_z(feats_extero)
-        return z_proprio, z_extero
-
-    def forward(self, obs):
-        feats = self.forward_feats(obs)
-        z_proprio, z_extero = self.forward_z(feats)
-        # if hasattr(self, 'pixel'):
-        #     z_pixel = self.pixel(obs['pixel'])
-        #     z_extero = th.cat((z_extero, z_pixel), dim=1)
-
-        return z_proprio, z_extero

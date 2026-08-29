@@ -102,12 +102,6 @@ def parse_srl_args(parser):
                          help='Whether if use the InfoNCE SimpleSPR version model.')
     arg_srl.add_argument("--model-proprio", action='store_true',
                          help='Whether if use the Proprioceptive version model.')
-    # arg_srl.add_argument("--model-ispr-mumo", action='store_true',
-    #                      help='Whether if use the InfoNCE SimpleSPR Multimodal version model.')
-    # arg_srl.add_argument("--model-i2spr", action='store_true',
-    #                      help='Whether if use the Introspective InfoNCE SimpleSPR model.')
-    # arg_srl.add_argument("--introspection-lambda", type=float, default=0,
-    #                      help='Introspection loss function lambda value, >0 to use introspection.')
 
     arg_srl.add_argument("--fusion-mlp", action='store_true',
                          help='Use MLP for Proprioceptive fusion.')
@@ -121,8 +115,13 @@ def parse_srl_args(parser):
                          help='Use Attention-based Proprioceptive fusion.')
     # arg_srl.add_argument("--fusion-mamba", action='store_true',
     #                      help='Use Mamba model for Proprioceptive fusion.')
-    arg_srl.add_argument("--late-fusion", action='store_true',
-                         help='Process sensor fusion in downstream processes.')
+    # arg_srl.add_argument("--late-fusion", action='store_true',
+    #                      help='Process sensor fusion in downstream processes.')
+
+    arg_srl.add_argument('--pipeline', type=str, default="R",
+                         help='Comma separated list of pipeline functions, A for attention, F for fusion, and R for representation.')
+    arg_srl.add_argument("--pipeline-branch", action='store_true',
+                         help='Use a separated pipeline for critic function.')
     return arg_srl
 
 
@@ -208,7 +207,7 @@ def args2pipeline(args, env_params):
     _args = args
     if not isinstance(_args, dict):
         _args = vars(_args)
-        
+
     pipeline = {'representation': []}
 
     if not _args.get('model_proprio', False):
@@ -225,16 +224,27 @@ def args2pipeline(args, env_params):
         fusion = 'gated'
     if _args.get('fusion_film', False):
         fusion = 'film'
-    if _args.get('fusion_crossatt', False):
-        fusion = 'crossatt'
+    # if _args.get('fusion_crossatt', False):
+    #     fusion = 'crossatt'
     # if _args.get('fusion_mamba', False):
     #     fusion = 'mamba'
 
-    if fusion is not None:
-        fusion = "F:" + fusion
-        pipeline['representation'].append((fusion, params))
+    arg_pipeline = _args.get('pipeline', "R").upper()
+    functions = arg_pipeline.split(',')
 
-    if _args.get('late_fusion', False):
+    for f in functions:
+        if f == "R":
+            pipeline['representation'].append(("R:", {}))
+
+        if f == "F":
+            if fusion is None:
+                raise TypeError("No fusion model selected")
+            fusion = "F:" + fusion
+            pipeline['representation'].append((fusion, params))
+
+        # if f == "A":
+
+    if _args.get('pipeline_branch', False):
         pipeline['critic'] = pipeline['representation'].copy()
 
     return pipeline
@@ -334,24 +344,34 @@ def args2logpath(args, algo, env_name=None):
     #     path_suffix += '-intr'
     if args.joint_optimization:
         path_suffix += '-joint'
-    if args.use_stochastic:
-        path_suffix += '-stch'
-    # fusion labels
-    if args.fusion_mlp:
-        path_suffix += '-fmlp'
-    if args.fusion_conv1d:
-        path_suffix += '-fconv1d'
-    if args.fusion_gated:
-        path_suffix += '-fgated'
-    if args.fusion_film:
-        path_suffix += '-ffilm'
-    if args.fusion_crossatt:
-        path_suffix += '-fcrossatt'
+    
+    pipeline_suffix = ''
+    arg_pipeline = args.pipeline.upper()
+    functions = arg_pipeline.split(',')
 
-    if args.late_fusion:
-        path_suffix += '_late'
+    for f in functions:
+        if f == "R":
+            if args.use_stochastic:
+                pipeline_suffix += '-rstch'
+            else:
+                pipeline_suffix += '-rdet'
+        if f == "F":
+            # fusion labels
+            if args.fusion_mlp:
+                pipeline_suffix += '-fmlp'
+            if args.fusion_conv1d:
+                pipeline_suffix += '-fconv1d'
+            if args.fusion_gated:
+                pipeline_suffix += '-fgated'
+            if args.fusion_film:
+                pipeline_suffix += '-ffilm'
+            if args.fusion_crossatt:
+                pipeline_suffix += '-fcrossatt'
 
-    exp_name = f"{algo}{path_suffix}"
+    if args.pipeline_branch:
+        pipeline_suffix += '-late'
+
+    exp_name = f"{algo}{path_suffix}{pipeline_suffix}"
 
     latest_run_id = get_latest_run_id(outfolder, exp_name)
 

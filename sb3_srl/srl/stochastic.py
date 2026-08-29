@@ -64,26 +64,27 @@ class StochasticWrapper(nn.Module):
     def __init__(self, model: BaseFunction, pre_act: nn.Module = nn.LeakyReLU):
         super().__init__()
         self.model = model
-        self.head_model = StochasticRepresentation(model.output_dim, pre_act)
+        self.prob_model = NormalDistributionHead(model.output_dim, pre_act)
         self.replaced_head = False
         if isinstance(model, BaseDecoder):
             del self.model.projection
-            self.model.projection = self.head_model
+            self.model.projection = self.prob_model
             self.replaced_head = True
 
     def forward(self, *args, **kwargs) -> D:
         if self.model is None:
             raise NotImplementedError("No deterministic backbone was defined")
-        obs_z = self.model(*args, **kwargs)
-        if self.replaced_head:
-            return obs_z
 
-        dist = self.head_model(obs_z)
-        return dist  # return distribution object by default
+        params = self.model(*args, **kwargs)
+        if self.replaced_head:
+            return self.prob_model.forward_dist(*params)
+
+        params = self.prob_model(params)
+        return self.prob_model.forward_dist(*params)  # return distribution object by default
 
     def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}("
             f"model={self.model.__class__.__name__},"
-            f"head={self.head_model.__class__.__name__})"
+            f"head={self.prob_model.__class__.__name__})"
         )

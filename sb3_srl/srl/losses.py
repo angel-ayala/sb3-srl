@@ -131,10 +131,7 @@ class InfoSPRLoss(RepresentationLoss):
         # L2 over Z
         latent_loss = latent_l2_loss(obs_z)
         self.log("z_l2", latent_loss.item())
-        # self.update_stopper(latent_loss)
-        # loss = contrastive #+ latent_loss * self.decoder_lambda
-        # self.log("rep_loss", loss.item())
-        return srl_loss  # *2.
+        return srl_loss
 
 
 SRL_LOSS = {

@@ -121,6 +121,8 @@ class RepresentationLoss:
                 lr=self.decoder_lr,
             )
 
+        print('loss', self)
+
     def add_parameter_group(
         self,
         name: str,
@@ -139,9 +141,7 @@ class RepresentationLoss:
             pipeline
         """
         if name in self.optimizers:
-            raise ValueError(
-                f"Optimizer group '{name}' already exists."
-            )
+            raise ValueError(f"Optimizer group '{name}' already exists.")
 
         parameters = []
 

@@ -36,6 +36,7 @@ class StatePipelineFactory:
         """
         A:XXXX -> Attention model
         F:XXXX -> Fusion model
+        R:     -> Representation layer
         models:[
             ("A:CrossAtention", {params}),
             ("F:MLP", {params})
@@ -45,16 +46,16 @@ class StatePipelineFactory:
         representation_dim = input_dim
 
         for model_name, model_params in models:
-            stage = create_function_model(model_name, model_params)
+            if "R:" in model_name:
+                if is_stochastic:
+                    stage = StochasticRepresentation(representation_dim)
+                else:
+                    stage = DeterministicRepresentation(representation_dim)
+            else:
+                stage = create_function_model(model_name, model_params)
+
             stages.append(stage)
             representation_dim = stage.output_dim
-        
-        if is_stochastic:
-            out_fn = StochasticRepresentation(representation_dim)
-        else:
-            out_fn = DeterministicRepresentation(representation_dim)
-
-        stages.append(out_fn)
 
         return TransformationBranch(stages)
 
@@ -117,7 +118,6 @@ class RepresentationFactory:
         print('encoder', encoder)
 
         loss = cls.create_loss(model_config["loss"])
-        print('loss', loss)
         pipeline = StatePipelineFactory.create(
             model_config["pipeline"],
             encoder.latent_dim,
