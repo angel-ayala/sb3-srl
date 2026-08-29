@@ -213,6 +213,9 @@ def args2pipeline(args, env_params):
     if not _args.get('model_proprio', False):
         return pipeline
 
+    arg_pipeline = _args.get('pipeline', "R").upper()
+    functions = arg_pipeline.split(',')
+
     fusion, params = None, {}
     params['latent_dim'] = _args.get('latent_dim', 32)
 
@@ -228,17 +231,17 @@ def args2pipeline(args, env_params):
     #     fusion = 'crossatt'
     # if _args.get('fusion_mamba', False):
     #     fusion = 'mamba'
-
-    arg_pipeline = _args.get('pipeline', "R").upper()
-    functions = arg_pipeline.split(',')
+    
+    if fusion is not None and "F" not in functions:
+        functions.insert(0, "F")
+    if fusion is None and "F" in functions:
+        raise TypeError("No fusion model selected")
 
     for f in functions:
         if f == "R":
             pipeline['representation'].append(("R:", {}))
 
         if f == "F":
-            if fusion is None:
-                raise TypeError("No fusion model selected")
             fusion = "F:" + fusion
             pipeline['representation'].append((fusion, params))
 
