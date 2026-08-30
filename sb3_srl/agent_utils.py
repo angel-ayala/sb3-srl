@@ -352,6 +352,22 @@ def args2logpath(args, algo, env_name=None):
     arg_pipeline = args.pipeline.upper()
     functions = arg_pipeline.split(',')
 
+    fusion_suffix = ''
+    # fusion labels
+    if args.fusion_mlp:
+        fusion_suffix += '-fmlp'
+    if args.fusion_conv1d:
+        fusion_suffix += '-fconv1d'
+    if args.fusion_gated:
+        fusion_suffix += '-fgated'
+    if args.fusion_film:
+        fusion_suffix += '-ffilm'
+    if args.fusion_crossatt:
+        fusion_suffix += '-fcrossatt'
+    
+    if fusion_suffix != '' and "F" not in functions:
+        functions.insert(0, "F")
+
     for f in functions:
         if f == "R":
             if args.use_stochastic:
@@ -359,17 +375,7 @@ def args2logpath(args, algo, env_name=None):
             else:
                 pipeline_suffix += '-rdet'
         if f == "F":
-            # fusion labels
-            if args.fusion_mlp:
-                pipeline_suffix += '-fmlp'
-            if args.fusion_conv1d:
-                pipeline_suffix += '-fconv1d'
-            if args.fusion_gated:
-                pipeline_suffix += '-fgated'
-            if args.fusion_film:
-                pipeline_suffix += '-ffilm'
-            if args.fusion_crossatt:
-                pipeline_suffix += '-fcrossatt'
+            pipeline_suffix += fusion_suffix
 
     if args.pipeline_branch:
         pipeline_suffix += '-late'
