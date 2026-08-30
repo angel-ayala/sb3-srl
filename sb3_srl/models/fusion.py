@@ -27,6 +27,8 @@ class FusionMLP(BaseFusion):
     def __init__(self, latent_dim):
         super(FusionMLP, self).__init__(latent_dim)
         self.fusion_layers = nn.Sequential(
+            nn.LayerNorm(2 * latent_dim),
+            nn.Tanh(),
             nn.Linear(2 * latent_dim, latent_dim, bias=True)
         )
 
@@ -42,6 +44,8 @@ class FusionConv1d(BaseFusion):
     def __init__(self, latent_dim):
         super(FusionConv1d, self).__init__(latent_dim)
         self.fusion_layers = nn.Sequential(
+            nn.BatchNorm1d(2 * latent_dim),
+            nn.Tanh(),
             nn.Conv1d(
                 in_channels=2 * latent_dim,
                 out_channels=latent_dim,
@@ -65,7 +69,9 @@ class FusionGated(BaseFusion):
     def __init__(self, latent_dim):
         super(FusionGated, self).__init__(latent_dim)
         self.gate = nn.Sequential(
-            nn.Linear(latent_dim * 2, latent_dim),
+            nn.LayerNorm(2 * latent_dim),
+            nn.Tanh(),
+            nn.Linear(2 * latent_dim, latent_dim),
             nn.Sigmoid()
         )
 
@@ -89,6 +95,8 @@ class FusionFiLM(BaseFusion):
         self.beta = nn.Linear(latent_dim, latent_dim)
 
         self.fusion_layers = nn.Sequential(
+            nn.LayerNorm(2 * latent_dim),
+            nn.Tanh(),
             nn.Linear(2 * latent_dim, latent_dim)
         )
 
