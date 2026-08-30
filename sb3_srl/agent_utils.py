@@ -208,7 +208,7 @@ def args2pipeline(args, env_params):
     if not isinstance(_args, dict):
         _args = vars(_args)
 
-    pipeline = {'representation': []}
+    pipeline = {'representation': [("R:", {})]}
 
     if not _args.get('model_proprio', False):
         return pipeline
@@ -237,15 +237,18 @@ def args2pipeline(args, env_params):
     if fusion is None and "F" in functions:
         raise TypeError("No fusion model selected")
 
+    # enforce custom order
+    pipe_functions = []
     for f in functions:
         if f == "R":
-            pipeline['representation'].append(("R:", {}))
+            pipe_functions.append(("R:", {}))
 
         if f == "F":
             fusion = "F:" + fusion
-            pipeline['representation'].append((fusion, params))
+            pipe_functions.append((fusion, params))
 
         # if f == "A":
+    pipeline['representation'] = pipe_functions
 
     if _args.get('pipeline_branch', False):
         pipeline['critic'] = pipeline['representation'].copy()

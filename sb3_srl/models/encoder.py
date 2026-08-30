@@ -18,7 +18,7 @@ class BaseEncoder(BaseFunction):
     def __init__(self, feature_dim: int, latent_dim: int):
         super().__init__(latent_dim)
         self.feature_dim = feature_dim
-        self.latent_dim = latent_dim
+        self.latent_dim: int | tuple[int, ...] = latent_dim
 
     def forward_feats(self, observation):
         raise NotImplementedError
@@ -164,21 +164,21 @@ class AdPuEncoder(BaseEncoder):
         self.prop_mask = prop_mask
         self.exte_mask = [not m for m in self.prop_mask]
         self.pixel_dim = pixel_dim
-        self.latent_dim = 0
 
         # Proprioceptive observation
         self.proprio = VectorEncoder((proprio_input, ), feature_dim, latent_dim, layers_dim)
-        self.latent_dim += self.proprio.latent_dim
         # Exteroceptive observation
         self.extero = VectorEncoder((extero_input, ), feature_dim, latent_dim, layers_dim)
-        self.latent_dim += self.extero.latent_dim
+
+        output_dim = (self.proprio.latent_dim, self.extero.latent_dim)
         # Pixel-based observation
         is_pixel = pixel_shape is not None
         if is_pixel:
             if self.pixel_dim is None:
                 self.pixel_dim = latent_dim
             self.pixel = NatureCNNEncoder(pixel_shape, feature_dim, latent_dim=self.pixel_dim)
-            self.latent_dim += self.pixel_dim
+            output_dim = output_dim + (self.pixel_dim, )
+        self.latent_dim = output_dim
 
     def prop_observation(self, observation):
         if isinstance(observation, dict):

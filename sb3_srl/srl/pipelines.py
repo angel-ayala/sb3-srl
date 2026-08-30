@@ -13,24 +13,42 @@ from torch import nn
 from ..models import BaseFunction
 
 
-class DeterministicRepresentation(BaseFunction):
+class BaseRepresentation(BaseFunction):
     def __init__(self, latent_dim: int):
         super().__init__(latent_dim)
+        models = []
+        if isinstance(latent_dim, tuple):
+            for z_dim in latent_dim:
+                models.append(self._instance_model(z_dim))
+        else:
+            models.append(self._instance_model(latent_dim))
 
-        model = [nn.LayerNorm(latent_dim), nn.Tanh()]
-        self.model = nn.Sequential(*model)
+        self.n_models = len(models)
+        self.models = nn.ModuleList(models)
+    
+    def _instance_model(self, z_dim):
+        raise NotImplementedError
 
     def forward(self, obs_feats):
-        feats = obs_feats
         if isinstance(obs_feats, tuple):
-            feats = th.cat(feats, dim=1)
-        z = self.model(feats)
-        return z
+            if self.n_models > 1:
+                z = th.cat(tuple(m(obs_feats[i])
+                            for i, m in enumerate(self.models)), dim=1)
+            else:
+                z = self.models[-1](th.cat(obs_feats, dim=1))
+            return z
+
+        return self.models[-1](obs_feats)
 
     def __repr__(self):
         return (
             f"{self.__class__.__name__}(output_dim={self.output_dim})"
         )
+
+class DeterministicRepresentation(BaseRepresentation):
+
+    def _instance_model(self, z_dim):
+        return nn.Sequential(nn.LayerNorm(z_dim), nn.Tanh())
 
 
 class TransformationBranch(nn.Module):

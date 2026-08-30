@@ -30,7 +30,8 @@ from .stochastic import StochasticRepresentation, StochasticWrapper
 class StatePipelineFactory:
 
     @staticmethod
-    def create_branch(models: list[tuple[str, BaseFunction]], input_dim: int,
+    def create_branch(models: list[tuple[str, BaseFunction]],
+                      input_dim: int | tuple[int, ...],
                       is_stochastic: bool = False
                       ) -> TransformationBranch:
         """
@@ -61,7 +62,7 @@ class StatePipelineFactory:
 
     @classmethod
     def create(cls, configuration: dict[str, list[tuple]],
-               input_dim: int,
+               input_dim: int | tuple[int, ...],
                is_stochastic: bool = False) -> StatePipeline:
         """
         "representation" -> Representation model related

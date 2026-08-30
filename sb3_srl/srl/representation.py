@@ -281,8 +281,15 @@ class RepresentationModel:
         self.loss: RepresentationLoss = loss
 
     @property
-    def latent_dim(self) -> int:
+    def latent_dim(self) -> int | tuple[int, ...]:
         return self.pipeline.latent_dim
+
+    @property
+    def z_dim(self) -> int:
+        if isinstance(self.latent_dim, tuple):
+            return sum(self.latent_dim)
+        else:
+            return self.latent_dim
 
     @property
     def is_stochastic(self) -> int:
@@ -348,8 +355,6 @@ class RepresentationModel:
     def set_training_mode(self, mode: bool) -> None:
         self.loss.train(mode)
         self.encoder_target.train(mode)
-
-        self.pipeline.train(mode)
         self.pipeline_target.train(mode)
 
     def forward_representation(self, observation, deterministic=False, use_grad=True, use_target=False, use_distribution=False):

@@ -13,6 +13,7 @@ import torch.nn.functional as F
 
 from ..models import BaseFunction
 from ..models import BaseDecoder
+from .pipelines import BaseRepresentation
 
 
 def normal_independent_dist(mean, log_var):
@@ -46,18 +47,29 @@ class NormalDistributionHead(BaseFunction):
         return mu, log_var
 
 
-class StochasticRepresentation(NormalDistributionHead):
-    def forward(self, obs_z):
-        if isinstance(obs_z, tuple):
-            obs_z = th.cat(obs_z, dim=1)
-        mean, log_var = super().forward(obs_z)
-        distribution = self.forward_dist(mean, log_var)
-        return distribution  # return distribution object by default
+class StochasticRepresentation(BaseRepresentation):
 
-    def __repr__(self):
-        return (
-            f"{self.__class__.__name__}(output_dim={self.output_dim})"
-        )
+    def _instance_model(self, z_dim):
+        return NormalDistributionHead(z_dim)
+
+    def forward(self, obs_feats):
+        if isinstance(obs_feats, tuple):
+
+            if self.n_models > 1:
+                mean, log_var = [], []
+                for i, m in enumerate(self.models):
+                    _mean, _log_var = m(obs_feats[i])
+                    mean.append(_mean)
+                    log_var.append(_log_var)
+                mean = th.concat(mean, dim=1)
+                log_var = th.concat(log_var, dim=1)
+            else:
+                mean, log_var = self.models[-1](th.cat(obs_feats, dim=1))
+        else:
+            mean, log_var = self.models[-1](obs_feats)
+
+        distribution = self.models[-1].forward_dist(mean, log_var)
+        return distribution  # return distribution object by default
 
 
 class StochasticWrapper(nn.Module):
