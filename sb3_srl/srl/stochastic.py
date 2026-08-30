@@ -13,8 +13,6 @@ import torch.nn.functional as F
 
 from ..models import BaseFunction
 from ..models import BaseDecoder
-from .pipelines import BaseRepresentation
-
 
 def normal_independent_dist(mean, log_var):
     # std = th.exp(0.5 * log_var)
@@ -27,11 +25,11 @@ def normal_independent_dist(mean, log_var):
 
 class NormalDistributionHead(BaseFunction):
     def __init__(self, latent_dim: int, pre_act: nn.Module = nn.LeakyReLU):
-        super(NormalDistributionHead, self).__init__(latent_dim)
+        super(NormalDistributionHead, self).__init__(latent_dim, latent_dim, False)
+        self.pre_act = pre_act() if pre_act is not None else None
         self.head = nn.Linear(latent_dim, latent_dim * 2)
         self.mu_norm = nn.LayerNorm(latent_dim)
         self.var_norm = nn.LayerNorm(latent_dim)
-        self.pre_act = pre_act()
 
     def forward_dist(self, mu, log_var):
         return normal_independent_dist(mu, log_var)
@@ -47,14 +45,13 @@ class NormalDistributionHead(BaseFunction):
         return mu, log_var
 
 
-class StochasticRepresentation(BaseRepresentation):
+class StochasticRepresentation(BaseFunction):
 
     def _instance_model(self, z_dim):
         return NormalDistributionHead(z_dim)
 
     def forward(self, obs_feats):
         if isinstance(obs_feats, tuple):
-
             if self.n_models > 1:
                 mean, log_var = [], []
                 for i, m in enumerate(self.models):
@@ -63,8 +60,10 @@ class StochasticRepresentation(BaseRepresentation):
                     log_var.append(_log_var)
                 mean = th.concat(mean, dim=1)
                 log_var = th.concat(log_var, dim=1)
+
             else:
                 mean, log_var = self.models[-1](th.cat(obs_feats, dim=1))
+
         else:
             mean, log_var = self.models[-1](obs_feats)
 
@@ -76,12 +75,14 @@ class StochasticWrapper(nn.Module):
     def __init__(self, model: BaseFunction, pre_act: nn.Module = nn.LeakyReLU):
         super().__init__()
         self.model = model
-        self.prob_model = NormalDistributionHead(model.output_dim, pre_act)
         self.replaced_head = False
+        prob_model = NormalDistributionHead(model.output_dim, pre_act)
         if isinstance(model, BaseDecoder):
             del self.model.projection
-            self.model.projection = self.prob_model
+            self.model.projection = prob_model
             self.replaced_head = True
+        else:
+            self.prob_model = prob_model
 
     def forward(self, *args, **kwargs) -> D:
         if self.model is None:
@@ -89,7 +90,7 @@ class StochasticWrapper(nn.Module):
 
         params = self.model(*args, **kwargs)
         if self.replaced_head:
-            return self.prob_model.forward_dist(*params)
+            return self.model.projection.forward_dist(*params)
 
         params = self.prob_model(params)
         return self.prob_model.forward_dist(*params)  # return distribution object by default
@@ -98,5 +99,6 @@ class StochasticWrapper(nn.Module):
         return (
             f"{self.__class__.__name__}("
             f"model={self.model.__class__.__name__},"
-            f"head={self.prob_model.__class__.__name__})"
+            f"head={NormalDistributionHead.__name__})\n"
+            f"{super().__repr__()}"
         )

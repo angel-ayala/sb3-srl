@@ -17,8 +17,8 @@ from .encoder import PixelEncoder
 
 
 class BaseDecoder(BaseFunction):
-    def __init__(self, output_dim: int):
-        super(BaseDecoder, self).__init__(output_dim)
+    def __init__(self, input_dim: int, output_dim: int):
+        super(BaseDecoder, self).__init__(input_dim, output_dim, False)
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
@@ -29,7 +29,7 @@ class VectorDecoder(BaseDecoder):
                  state_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256]):
-        super(VectorDecoder, self).__init__(state_shape[-1])
+        super(VectorDecoder, self).__init__(latent_dim, state_shape[-1])
         layers = create_mlp(latent_dim, state_shape[-1], layers_dim,
                             nn.LeakyReLU, False, True)
         layers.insert(0, nn.Linear(latent_dim, latent_dim))
@@ -50,7 +50,7 @@ class SPRDecoder(BaseDecoder):
                  action_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256]):
-        super(SPRDecoder, self).__init__(latent_dim)
+        super(SPRDecoder, self).__init__(latent_dim, latent_dim)
         layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, False, True)
         self.code = nn.Sequential(*layers)
         self.projection = nn.Linear(latent_dim, latent_dim)
@@ -75,7 +75,7 @@ class SimpleSPRDecoder(BaseDecoder):
                  action_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256]):
-        super(SimpleSPRDecoder, self).__init__(latent_dim)
+        super(SimpleSPRDecoder, self).__init__(latent_dim, latent_dim)
         code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
         code_layers.insert(-1, nn.LayerNorm(latent_dim))
         self.transition = nn.Sequential(*code_layers)
@@ -107,7 +107,7 @@ class PixelDecoder(BaseDecoder):
     def __init__(self, state_shape: tuple,
                  latent_dim: int,
                  layers_filter: List[int] = [32, 32]):
-        super(PixelDecoder, self).__init__(PixelEncoder.OUT_DIM[self.num_layers])
+        super(PixelDecoder, self).__init__(latent_dim, PixelEncoder.OUT_DIM[self.num_layers])
         self.num_layers = len(layers_filter)
         self.num_filters = layers_filter[0]
 
@@ -145,7 +145,7 @@ class ProprioceptiveSPRDecoder(BaseDecoder):
                  latent_dim: int,
                  layers_dim: List[int] = [256],
                  with_fusion: bool = False):
-        super(ProprioceptiveSPRDecoder, self).__init__(latent_dim)
+        super(ProprioceptiveSPRDecoder, self).__init__(latent_dim, latent_dim)
         code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
         code_layers.insert(-1, nn.LayerNorm(latent_dim))
         self.proprio_trans = nn.Sequential(*code_layers)

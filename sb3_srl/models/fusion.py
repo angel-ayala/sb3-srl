@@ -13,92 +13,82 @@ from .base import BaseFunction
 
 
 class BaseFusion(BaseFunction):
-    def __init__(self, latent_dim: int):
-        super().__init__(latent_dim)
+    def __init__(self, latent_dim):
+        super(BaseFusion, self).__init__((latent_dim, latent_dim), latent_dim, True)
+        if isinstance(self.input_dim, tuple):
+            self.input_dim = sum(self.input_dim)
+
+    def forward(self, z):
+
+        zf = super().forward(z)
+        
+        if isinstance(zf, tuple):
+            zf = th.cat(zf, dim=1)
+
+        return self.fusion_layers(zf)
 
     def __repr__(self):
         return (
-            f"{self.__class__.__name__}(input_dim={2*self.output_dim},"
-            f"output_dim={self.output_dim})"
+            f"{self.__class__.__name__}(input_dim={self.input_dim},"
+            f"output_dim={self.output_dim})\n"
+            f"{super().__repr__()}"
         )
 
 
 class FusionMLP(BaseFusion):
     def __init__(self, latent_dim):
         super(FusionMLP, self).__init__(latent_dim)
+
         self.fusion_layers = nn.Sequential(
-            nn.LayerNorm(2 * latent_dim),
-            nn.Tanh(),
-            nn.Linear(2 * latent_dim, latent_dim, bias=True)
+            nn.Linear(self.input_dim, self.output_dim, bias=True)
         )
-
-    def forward(self, z):
-        if isinstance(z, tuple):
-            zf = th.cat(z, dim=1)
-        else:
-            zf = z
-        return self.fusion_layers(zf)
+    
+    def _instance_model(self, z_dim):
+        return nn.Sequential(nn.LayerNorm(z_dim),nn.Tanh())
 
 
-class FusionConv1d(BaseFusion):
+
+class FusionConv1d(FusionMLP):
     def __init__(self, latent_dim):
         super(FusionConv1d, self).__init__(latent_dim)
+
         self.fusion_layers = nn.Sequential(
-            nn.BatchNorm1d(2 * latent_dim),
-            nn.Tanh(),
+            nn.Unflatten(1, (self.input_dim, 1)),
             nn.Conv1d(
-                in_channels=2 * latent_dim,
-                out_channels=latent_dim,
+                in_channels=self.input_dim,
+                out_channels=self.output_dim,
                 kernel_size=1,
-                groups=latent_dim,
+                groups=self.output_dim,
                 bias=True
             ),
             nn.Flatten(start_dim=1),
         )
 
-    def forward(self, z):
-        if isinstance(z, tuple):
-            zf = th.cat(z, dim=1)
-        else:
-            zf = z
-        zf = zf.reshape(zf.shape[0], 2 * self.output_dim, 1)
-        return self.fusion_layers(zf)
 
-
-class FusionGated(BaseFusion):
+class FusionGated(FusionMLP):
     def __init__(self, latent_dim):
         super(FusionGated, self).__init__(latent_dim)
-        self.gate = nn.Sequential(
-            nn.LayerNorm(2 * latent_dim),
-            nn.Tanh(),
-            nn.Linear(2 * latent_dim, latent_dim),
+        self.fusion_layers = nn.Sequential(
+            nn.Linear(self.input_dim, self.output_dim, bias=True),
             nn.Sigmoid()
         )
 
     def forward(self, z):
         if isinstance(z, tuple):
             z1, z2 = z
-            z_concat = th.cat(z, dim=1)
         else:
             z1, z2 = z.chunk(2, dim=1)
-            z_concat = z
 
-        g = self.gate(z_concat)
+        g = super().forward(z)
         return g * z1 + (1 - g) * z2
 
 
-class FusionFiLM(BaseFusion):
+class FusionFiLM(FusionMLP):
     def __init__(self, latent_dim):
         super(FusionFiLM, self).__init__(latent_dim)
 
-        self.gamma = nn.Linear(latent_dim, latent_dim)
-        self.beta = nn.Linear(latent_dim, latent_dim)
-
-        self.fusion_layers = nn.Sequential(
-            nn.LayerNorm(2 * latent_dim),
-            nn.Tanh(),
-            nn.Linear(2 * latent_dim, latent_dim)
-        )
+        self.gamma = nn.Linear(self.output_dim, self.output_dim)
+        self.beta = nn.Linear(self.output_dim, self.output_dim)
 
     def forward(self, z):
         if isinstance(z, tuple):

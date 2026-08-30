@@ -49,9 +49,9 @@ class StatePipelineFactory:
         for model_name, model_params in models:
             if "R:" in model_name:
                 if is_stochastic:
-                    stage = StochasticRepresentation(representation_dim)
+                    stage = StochasticRepresentation(representation_dim, representation_dim, True)
                 else:
-                    stage = DeterministicRepresentation(representation_dim)
+                    stage = DeterministicRepresentation(representation_dim, representation_dim, True)
             else:
                 stage = create_function_model(model_name, model_params)
 
@@ -98,11 +98,9 @@ class RepresentationFactory:
     def create_decoder(config, is_stochastic=False):
         name, params = config
         decoder = create_decoder(name, params)
-        print('decoder', decoder)
 
         if is_stochastic:
-            decoder = StochasticWrapper(decoder)
-            print('decoderStochastic', decoder)
+            decoder = StochasticWrapper(decoder, None)
 
         return decoder
 
@@ -134,6 +132,7 @@ class RepresentationFactory:
                 decoder_config[1]["latent_dim"] = pipeline.latent_dim
             decoder = cls.create_decoder(
                 decoder_config, model_config["is_stochastic"])
+            print('decoder', decoder)
 
         model = RepresentationModel(
             model_type=srl_config["model"],

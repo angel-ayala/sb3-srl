@@ -15,10 +15,16 @@ from .base import BaseFunction
 
 
 class BaseEncoder(BaseFunction):
-    def __init__(self, feature_dim: int, latent_dim: int):
-        super().__init__(latent_dim)
+    def __init__(self,
+                 state_shape: tuple,
+                 feature_dim: int | tuple[int, ...],
+                 latent_dim: int | tuple[int, ...]):
+        super(BaseEncoder, self).__init__(state_shape, latent_dim, False)
         self.feature_dim = feature_dim
-        self.latent_dim: int | tuple[int, ...] = latent_dim
+
+    @property
+    def latent_dim(self) -> int | tuple[int, ...]:
+        return self.output_dim
 
     def forward_feats(self, observation):
         raise NotImplementedError
@@ -33,7 +39,7 @@ class VectorEncoder(BaseEncoder):
                  feature_dim: int,
                  latent_dim: int,
                  layers_dim: List[int] = [256, 256]):
-        super(VectorEncoder, self).__init__(feature_dim, latent_dim)
+        super(VectorEncoder, self).__init__(state_shape, feature_dim, latent_dim)
         feats = create_mlp(state_shape[-1], feature_dim, layers_dim,
                             nn.LeakyReLU, False, True)
         if len(state_shape) == 2:
@@ -50,25 +56,20 @@ class VectorEncoder(BaseEncoder):
         return self.head_model(feats)
 
 
-class SimpleSPREncoder(BaseEncoder):
+class SimpleSPREncoder(VectorEncoder):
     def __init__(self,
-                 base_encoder: BaseEncoder,
+                 state_shape: tuple,
                  feature_dim: int,
                  latent_dim: int,
                  hidden_dim: int,
                  out_act: nn.Module = nn.Tanh()):
-        super(SimpleSPREncoder, self).__init__(feature_dim, latent_dim)
-        self.feats_model = base_encoder
+        super(SimpleSPREncoder, self).__init__(state_shape, feature_dim, latent_dim)
         self.head_model = nn.Sequential(
             nn.Linear(feature_dim, hidden_dim),
             nn.LeakyReLU(),
             nn.Linear(hidden_dim, latent_dim),
             out_act
         )
-
-    def forward_feats(self, obs):
-        feats = self.feats_model(obs)
-        return self.head_model(feats)
 
 
 class NatureCNNEncoder(BaseEncoder):
@@ -82,7 +83,7 @@ class NatureCNNEncoder(BaseEncoder):
         feature_dim: int = 512,
         latent_dim: int = 256,
         normalized_image: bool = False) -> None:
-        super(NatureCNNEncoder, self).__init__(feature_dim, latent_dim)
+        super(NatureCNNEncoder, self).__init__(state_shape, feature_dim, latent_dim)
         # We assume CxHxW images (channels first)
         n_input_channels = state_shape[0]
         # self.features_dim = features_dim
@@ -120,7 +121,7 @@ class PixelEncoder(BaseEncoder):
                  feature_dim: int,
                  latent_dim: int,
                  layers_filter: List[int] = [32, 32]):
-        super(PixelEncoder, self).__init__(feature_dim, latent_dim)
+        super(PixelEncoder, self).__init__(state_shape, feature_dim, latent_dim)
         assert len(state_shape) == 3
         num_layers = len(layers_filter)
         feats_layers = [nn.Conv2d(state_shape[0], layers_filter[0], 3, stride=2)]
@@ -158,7 +159,7 @@ class AdPuEncoder(BaseEncoder):
                  pixel_shape: Optional[tuple] = None,
                  pixel_dim: Optional[int] = None):
         assert state_shape[-1] == len(prop_mask), f"Invalid proprioceptive mask's, length ({len(prop_mask)}) != observation length ({state_shape[-1]})."
-        super(AdPuEncoder, self).__init__(feature_dim, latent_dim)
+        super(AdPuEncoder, self).__init__(state_shape, feature_dim, latent_dim)
         proprio_input = sum(prop_mask)  # = 3 imu + 3 gyro + 4 motors
         extero_input = len(prop_mask) - proprio_input
         self.prop_mask = prop_mask
@@ -178,7 +179,7 @@ class AdPuEncoder(BaseEncoder):
                 self.pixel_dim = latent_dim
             self.pixel = NatureCNNEncoder(pixel_shape, feature_dim, latent_dim=self.pixel_dim)
             output_dim = output_dim + (self.pixel_dim, )
-        self.latent_dim = output_dim
+        self.output_dim = output_dim
 
     def prop_observation(self, observation):
         if isinstance(observation, dict):
