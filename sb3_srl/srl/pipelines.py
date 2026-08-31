@@ -110,7 +110,11 @@ class StatePipeline(nn.Module):
             transform = self.forward_representation
         else:
             transform = self.forward_critic
-        return th.tanh(transform(obs_feats, deterministic, use_grad))
+
+        z = transform(obs_feats, deterministic, use_grad)
+        if self.is_stochastic:
+            z = th.tanh(z)
+        return z
 
     def __repr__(self) -> str:
         configurations = {
