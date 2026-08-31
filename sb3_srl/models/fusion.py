@@ -100,7 +100,7 @@ class FusionFiLM(FusionMLP):
         beta = self.beta(z_p)
 
         z_e_mod = gamma * z_e + beta
-        return self.fusion_layers(th.cat([z_p, z_e_mod], dim=-1))
+        return super().forward((z_p, z_e_mod))
 
 
 class CrossAttention(BaseFusion):

@@ -89,7 +89,7 @@ class StatePipeline(nn.Module):
                 z = out.mean
             else:
                 z = out.rsample() if use_grad else out.sample()
-            return th.tanh(z)
+            return z
 
         return out
 
@@ -110,7 +110,7 @@ class StatePipeline(nn.Module):
             transform = self.forward_representation
         else:
             transform = self.forward_critic
-        return transform(obs_feats, deterministic, use_grad)
+        return th.tanh(transform(obs_feats, deterministic, use_grad))
 
     def __repr__(self) -> str:
         configurations = {
