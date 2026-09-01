@@ -14,6 +14,7 @@ import torch.nn.functional as F
 from ..models import BaseFunction
 from ..models import BaseDecoder
 
+
 def normal_independent_dist(mean, log_var):
     # std = th.exp(0.5 * log_var)
     std = F.softplus(log_var) + 1e-5

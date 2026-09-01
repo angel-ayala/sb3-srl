@@ -374,7 +374,10 @@ class RepresentationModel:
         obs_z = self.encoder_target(observation)
         return self.pipeline_target.forward_z(obs_z, deterministic, use_grad)
 
-    def decode_latent(self, obs_z, action=None):
+    def decode_latent(self, obs_z, action=None, from_distribution=False):
+        if from_distribution:
+            obs_z = self.pipeline.forward_distribution(obs_z)
+
         if action is not None:
             return self.decoder(obs_z, action)
         else:

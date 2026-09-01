@@ -118,14 +118,29 @@ class InfoSPRLoss(RepresentationLoss):
 
     def compute_loss(self, observations, actions, next_observations):
         # Encode observations
-        obs_z = self.model.forward_representation(observations)
-        obs_z1_hat = self.model.decode_latent(obs_z, actions)
-        obs_z1 = self.model.forward_representation(next_observations, use_target=True, use_distribution=True)
+        obs_z = self.model.forward_representation(observations, use_distribution=self.model.is_stochastic)
+        obs_z1_hat = self.model.decode_latent(obs_z, actions, from_distribution=self.model.is_stochastic)
+        obs_z1 = self.model.forward_representation(next_observations, use_target=True, use_distribution=self.model.is_stochastic)
+
         # compare next_latent with transition
         if self.model.is_stochastic:
+            with th.no_grad():
+                # Current-state uncertainty
+                entropy = obs_z.entropy().mean()
+                self.log("z_entropy", entropy.item())
+
+                # Entropy-controlled target variance
+                scale = th.exp(-1e-4 * entropy)
+
+                target_std = obs_z1.stddev * scale
+                obs_z1 = self.model.pipeline.create_probability(obs_z1.mean, target_std)
+
             # Kullback-Leibler
             srl_loss = D.kl.kl_divergence(obs_z1, obs_z1_hat).mean()
             self.log("kl_loss", srl_loss.item())
+
+            # mean value for L2
+            obs_z = obs_z.mean
         else:
             # contrastive loss
             srl_loss = info_nce_loss(obs_z1, obs_z1_hat)
@@ -134,161 +149,6 @@ class InfoSPRLoss(RepresentationLoss):
         latent_loss = latent_l2_loss(obs_z)
         self.log("z_l2", latent_loss.item())
         return srl_loss
-
-class ALMLoss(RepresentationLoss):
-    def __init__(
-        self,
-        aux_type: str = 'l2',
-        aux_optim: str = 'ema',
-        aux_coef: float = 10.0,
-        disable_reward: bool = True,
-        freeze_critic: bool = True,
-        disable_svg: bool = True,
-        seq_len: int = 1,
-        encoder_lr: float = 1e-3,
-        encoder_tau: float = 0.999,
-        decoder_lr: Optional[float] = None,
-        decoder_lambda: Optional[float] = None,
-        optimizer_class: th.optim.Optimizer = th.optim.Adam,
-        optimizer_kwargs: Optional[dict[str, Any]] = None,
-    ):
-        super().__init__(
-            encoder_lr=encoder_lr,
-            encoder_tau=encoder_tau,
-            decoder_lr=decoder_lr,
-            decoder_lambda=decoder_lambda,
-            optimizer_class=optimizer_class,
-            optimizer_kwargs=optimizer_kwargs,
-        )
-        self.aux_type = aux_type
-        self.aux_optim = aux_optim
-        self.aux_coef = aux_coef
-        self.disable_reward = disable_reward
-        self.freeze_critic = freeze_critic
-        self.disable_svg = disable_svg
-        self.seq_len = seq_len
-
-        self.reward_model: Optional[nn.Module] = None
-        self.actor_model: Optional[nn.Module] = None
-
-    # def attach(self, model: "RepresentationModel") -> None:
-    #     super().attach(model)
-    #     # Assume model has reward and actor attached
-    #     self.reward_model = getattr(model, 'reward', None)
-    #     self.actor_model = getattr(model, 'actor', None)
-
-    def compute_loss(
-        self,
-        observations,
-        actions,
-        next_observations,
-        std=None,
-    ) -> th.Tensor:
-        """
-        Compute ALM loss over sequence.
-        """
-        metrics = {}
-
-        z_dist = self.encoder(observations)
-        z_batch = z_dist.rsample()
-        self._check_collapse(z_batch.detach(), metrics)
-
-        log = True
-        alm_loss = 0.0
-
-        if self.disable_reward:
-            aux_loss, _ = self._aux_loss(
-                z_batch, actions[0], next_observations[0], log, metrics
-            )
-            alm_loss = self.aux_coef * aux_loss.mean()
-        else:
-            for t in range(self.seq_len):
-                if t > 0:
-                    log = False
-
-                aux_loss, z_next_prior_batch = self._aux_loss(
-                    z_batch, actions[t], next_observations[t], log, metrics
-                )
-                reward_loss = self._alm_reward_loss(
-                    z_batch, actions[t], log, metrics
-                )
-                alm_loss += self.aux_coef * aux_loss - reward_loss
-                z_batch = z_next_prior_batch
-
-            alm_loss = alm_loss.mean()
-
-        # Actor loss
-        if self.freeze_critic:
-            actor_loss = self.actor_model(z_batch, std, detach_qz=True, detach_action=False)
-        else:
-            actor_loss = self.actor_model(z_batch, std, detach_qz=False, detach_action=True)
-
-        alm_loss += actor_loss
-
-        for key, val in metrics.items():
-            self.log(f"alm/{key}", val)
-
-        return alm_loss
-
-    def _check_collapse(self, z_batch, metrics):
-        from torch.linalg import matrix_rank, cond
-
-        rank3 = matrix_rank(z_batch, atol=1e-3, rtol=1e-3)
-        rank2 = matrix_rank(z_batch, atol=1e-2, rtol=1e-2)
-        rank1 = matrix_rank(z_batch, atol=1e-1, rtol=1e-1)
-        condition = cond(z_batch)
-        metrics["rank-3"] = rank3.item()
-        metrics["rank-2"] = rank2.item()
-        metrics["rank-1"] = rank1.item()
-        metrics["cond"] = condition.item()
-
-    def _aux_loss(self, z_batch, action_batch, next_state_batch, log, metrics):
-        if "op" in self.aux_type:
-            next_state_pred = self.pipeline(z_batch, action_batch)
-            if self.aux_type == "op-l2":
-                distance = ((next_state_pred.rsample() - next_state_batch) ** 2).sum(-1, keepdim=True)
-            else:  # op-kl
-                distance = -next_state_pred.log_prob(next_state_batch).unsqueeze(-1)
-            if log:
-                metrics[self.aux_type] = distance.mean().item()
-            return distance, None
-
-        z_next_prior_dist = self.pipeline(z_batch, action_batch)
-
-        if self.aux_optim == "ema":
-            with th.no_grad():
-                z_next_dist = self.encoder_target(next_state_batch)
-        elif self.aux_optim == "detach":
-            with th.no_grad():
-                z_next_dist = self.encoder(next_state_batch)
-        else:  # online
-            z_next_dist = self.encoder(next_state_batch)
-
-        if self.aux_type == "l2":
-            distance = ((z_next_dist.rsample() - z_next_prior_dist.rsample()) ** 2).sum(-1, keepdim=True)
-            if log:
-                metrics["l2"] = distance.mean().item()
-        elif self.aux_type == "fkl":
-            distance = D.kl.kl_divergence(z_next_dist, z_next_prior_dist).unsqueeze(-1)
-            if log:
-                metrics["fkl"] = distance.mean().item()
-                metrics["prior_entropy"] = z_next_prior_dist.entropy().mean().item()
-                metrics["posterior_entropy"] = z_next_dist.entropy().mean().item()
-        else:  # rkl
-            distance = D.kl.kl_divergence(z_next_prior_dist, z_next_dist).unsqueeze(-1)
-            if log:
-                metrics["rkl"] = distance.mean().item()
-                metrics["prior_entropy"] = z_next_prior_dist.entropy().mean().item()
-                metrics["posterior_entropy"] = z_next_dist.entropy().mean().item()
-
-        return distance, z_next_prior_dist.rsample()
-
-    def _alm_reward_loss(self, z_batch, action_batch, log, metrics):
-        reward = self.reward_model(z_batch, action_batch)
-        if log:
-            metrics["alm_reward_batch"] = reward.mean().item()
-        return reward
-
 
 
 SRL_LOSS = {

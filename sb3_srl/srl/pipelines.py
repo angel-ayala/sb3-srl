@@ -11,6 +11,7 @@ import torch as th
 from torch import nn
 
 from ..models import BaseFunction
+from .stochastic import normal_independent_dist
 
 
 class DeterministicRepresentation(BaseFunction):
@@ -75,6 +76,18 @@ class StatePipeline(nn.Module):
     @property
     def latent_dim(self):
         return self.branches["representation"].output_dim
+    
+    def create_probability(self, mean, log_var):
+        return normal_independent_dist(mean, log_var)
+
+    def forward_distribution(self, obs_dist, deterministic=False, use_grad=True):
+        if self.is_stochastic:
+            if deterministic:
+                z = obs_dist.mean
+            else:
+                z = obs_dist.rsample() if use_grad else obs_dist.sample()
+            return z
+        return obs_dist
 
     def forward_branch(self, branch: str, obs_feats, deterministic=False, use_grad=True, use_distribution=False):
         try:
@@ -84,12 +97,8 @@ class StatePipeline(nn.Module):
             print(f"No branch {branch} in pipeline")
             return None
 
-        if self.is_stochastic and not use_distribution:
-            if deterministic:
-                z = out.mean
-            else:
-                z = out.rsample() if use_grad else out.sample()
-            return z
+        if not use_distribution:
+            return self.forward_distribution(out, deterministic, use_grad)
 
         return out
 

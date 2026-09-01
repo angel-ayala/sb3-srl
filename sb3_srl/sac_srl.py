@@ -143,7 +143,7 @@ class SRLSAC(SAC, SRLAlgorithm):
                 next_q_values = th.cat(self.critic_target(next_obs_z, next_actions), dim=1)
                 # entropy term
                 entropy = ent_coef * next_log_prob.reshape(-1, 1)
-                next_v_values = th.max(next_q_values, dim=1, keepdim=True)[0] - entropy
+                # next_v_values = th.max(next_q_values, dim=1, keepdim=True)[0] - entropy
                 next_q_values = th.min(next_q_values, dim=1, keepdim=True)[0] - entropy
                 # td error + entropy term
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
