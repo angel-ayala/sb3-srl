@@ -130,7 +130,9 @@ class InfoSPRLoss(RepresentationLoss):
                 self.log("z_entropy", entropy.item())
 
                 # Entropy-controlled target variance
-                scale = th.exp(-1e-4 * entropy)
+                # scale = th.exp(-1e-4 * entropy)
+                scale = 1 + 1e-4 * entropy
+                self.log("z_entropy_scale", scale.item())
 
                 target_std = obs_z1.stddev * scale
                 obs_z1 = self.model.pipeline.create_probability(obs_z1.mean, target_std)
