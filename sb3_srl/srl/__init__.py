@@ -114,7 +114,6 @@ class RepresentationFactory:
         model_config = srl_config["config"]
 
         encoder = cls.create_encoder(model_config["encoder"])
-        print('encoder', encoder)
 
         loss = cls.create_loss(model_config["loss"])
         pipeline = StatePipelineFactory.create(
@@ -122,7 +121,6 @@ class RepresentationFactory:
             encoder.latent_dim,
             model_config["is_stochastic"]
         )
-        print('pipeline', pipeline)
 
         decoder_config = model_config.get("decoder")
         if decoder_config is not None:
@@ -132,7 +130,6 @@ class RepresentationFactory:
                 decoder_config[1]["latent_dim"] = pipeline.latent_dim
             decoder = cls.create_decoder(
                 decoder_config, model_config["is_stochastic"])
-            print('decoder', decoder)
 
         model = RepresentationModel(
             model_type=srl_config["model"],
@@ -141,9 +138,12 @@ class RepresentationFactory:
             pipeline=pipeline,
             decoder=decoder,
             joint_optimization=model_config["joint_optimization"],
+            entropy_beta=model_config["entropy_beta"],
+            with_balancer=model_config["with_balancer"]
         )
 
         model.create_target()
+        print(model)
 
         # objective/pipeline selection will be added here
         return model
@@ -235,8 +235,8 @@ class SRLPolicy:
             observations, actions, next_observations
         )
 
-    def update_srl(self, loss):
-        return self.rep_model.loss.optimize(loss)
+    def update_srl(self, rep_loss, critic_loss=None):
+        return self.rep_model.loss.optimize(rep_loss, critic_loss=critic_loss)
 
     # ------------------------------------------------------------------
     # Training / device

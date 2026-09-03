@@ -122,6 +122,11 @@ def parse_srl_args(parser):
                          help='Comma separated list of pipeline functions, A for attention, F for fusion, and R for representation.')
     arg_srl.add_argument("--pipeline-branch", action='store_true',
                          help='Use a separated pipeline for critic function.')
+
+    arg_srl.add_argument("--loss-balancer", action='store_true',
+                         help='Use a gradient normalization to balance critic and representation impact.')
+    arg_srl.add_argument("--entropy-beta", type=float, default=0,
+                         help='Scalar factor for entropy scale of next-state distribution.')
     return arg_srl
 
 
@@ -315,6 +320,8 @@ def args2srl_config(args, env_params):
         'decoder': decoder,
         'is_stochastic': _args.get('use_stochastic', False),
         'joint_optimization': _args.get('joint_optimization', False),
+        'entropy_beta': _args.get('entropy_beta', 0),
+        'with_balancer': _args.get('loss_balancer', False),
     }
 
     return {'model': model_name, 'config': srl_config}
@@ -350,6 +357,11 @@ def args2logpath(args, algo, env_name=None):
     #     path_suffix += '-intr'
     if args.joint_optimization:
         path_suffix += '-joint'
+    if args.loss_balancer:
+        path_suffix += '-blnc'
+    if args.entropy_beta != 0:
+        entropy_suffix = f"eb{args.entropy_beta:.0e}".replace('-', '')
+        path_suffix += f"-{entropy_suffix}"
     
     pipeline_suffix = ''
     arg_pipeline = args.pipeline.upper()

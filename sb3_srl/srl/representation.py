@@ -16,6 +16,7 @@ from stable_baselines3.common.utils import polyak_update
 
 from ..models import BaseEncoder
 from ..models import BaseDecoder
+from ..models.tools import GradientBalancer
 from .pipelines import StatePipeline
 from .utils import compute_mutual_information
 
@@ -121,8 +122,6 @@ class RepresentationLoss:
                 lr=self.decoder_lr,
             )
 
-        print('loss', self)
-
     def add_parameter_group(
         self,
         name: str,
@@ -182,21 +181,34 @@ class RepresentationLoss:
 
     def optimize(
         self,
-        loss: th.Tensor,
+        rep_loss: th.Tensor,
+        critic_loss: Optional[th.Tensor] = None,
         update: bool = True,
     ) -> th.Tensor:
         """
         Execute one representation optimization step.
         """
+        srl_weight = 1
+
+        if self.model.balancer is not None:
+            srl_weight = self.model.balancer.update_weight(
+                critic_loss, rep_loss, self.model.encoder.parameters())
+
+        self.log("srl_weight", srl_weight)
+
         if update:
             self.zero_grad()
 
-        self.backward(loss)
+        total_loss = rep_loss * srl_weight
+        if critic_loss is not None:
+            total_loss += critic_loss
+
+        self.backward(total_loss)
 
         if update:
             self.step()
 
-        return loss
+        return total_loss
 
     # ------------------------------------------------------------------
     # Loss
@@ -267,7 +279,9 @@ class RepresentationModel:
                  loss: RepresentationLoss,
                  pipeline: StatePipeline,
                  decoder: Optional[BaseDecoder],
-                 joint_optimization: bool = False):
+                 joint_optimization: bool = False,
+                 entropy_beta: float = 0.05,
+                 with_balancer: bool = False):
         self._log_fn = None
         self.type = model_type
         self.joint_optimization = joint_optimization
@@ -279,6 +293,11 @@ class RepresentationModel:
         self.device = 'cpu'
         loss.attach(self)
         self.loss: RepresentationLoss = loss
+        self.entropy_beta = entropy_beta
+
+        self.balancer = None
+        if with_balancer:
+            self.balancer = GradientBalancer()
 
     @property
     def latent_dim(self) -> int | tuple[int, ...]:
@@ -364,7 +383,17 @@ class RepresentationModel:
         else:
             obs_z = self.encoder(observation)  # always deterministic
             transform = self.pipeline.forward_representation
-        return transform(obs_z, deterministic, use_grad, use_distribution)
+
+        obs_z = transform(obs_z, deterministic, use_grad, use_distribution)
+
+        # Next-state uncertainty-aware
+        if self.entropy_beta != 0 and use_target:
+            obs_z, entropy_norm, scale = self.pipeline_target.scale_probability(
+                obs_z, self.entropy_beta)
+            self.log("z1_entropy", entropy_norm.item())
+            self.log("z1_entropy_scale", scale.item())
+
+        return obs_z
 
     def forward_z(self, observation, deterministic=False, use_grad=True):
         obs_z = self.encoder(observation)
@@ -390,14 +419,9 @@ class RepresentationModel:
         out_str += str(self.pipeline)
         out_str += '\n'
         out_str += str(self.decoder)
-        return out_str
-
-    def __str__(self):
-        out_str = f"{self.type}Model"
-        out_str += f"({self.encoder.__class__.__name__}"
-        out_str += f"+{self.pipeline}"
-        if not self.encoder_only:
-            out_str += f"+{self.decoder.__class__.__name__})"
-        else:
-            out_str += ")"
+        out_str += '\n'
+        out_str += str(self.loss)
+        out_str += f'\nis_stochastic={self.is_stochastic},'
+        out_str += f'\nentropy_beta={self.entropy_beta},'
+        out_str += f'\nwith_balancer={self.balancer is not None},'
         return out_str

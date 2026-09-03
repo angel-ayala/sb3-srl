@@ -77,17 +77,35 @@ class StatePipeline(nn.Module):
     def latent_dim(self):
         return self.branches["representation"].output_dim
     
-    def create_probability(self, mean, log_var):
-        return normal_independent_dist(mean, log_var)
+    def scale_probability(self, dist, entropy_beta=0.05):
+        entropy_norm = None
+        scale = None
+        latent_dim = sum(self.latent_dim) if isinstance(self.latent_dim, tuple) else self.latent_dim
+
+        if entropy_beta == 0:
+            raise AttributeError("Beta value for entropy coefficient must be != 0")
+
+        if not self.is_stochastic:
+            raise AttributeError("Entropy value only can be obtained from distribution objecto")
+            
+        with th.no_grad():
+            # Next-state uncertainty-aware
+            entropy = dist.entropy().mean()
+            entropy_norm = entropy / latent_dim
+
+            # Entropy-controlled target variance
+            scale = 1 + entropy_norm * entropy_beta # 1e-3
+            scale = scale.clamp(min=0.5, max=2.0)
+    
+            dist = normal_independent_dist(dist.mean, dist.stddev * scale)
+        return dist, entropy_norm, scale
 
     def forward_distribution(self, obs_dist, deterministic=False, use_grad=True):
-        if self.is_stochastic:
-            if deterministic:
-                z = obs_dist.mean
-            else:
-                z = obs_dist.rsample() if use_grad else obs_dist.sample()
-            return z
-        return obs_dist
+        if deterministic:
+            z_dist = obs_dist.mean
+        else:
+            z_dist = obs_dist.rsample() if use_grad else obs_dist.sample()
+        return z_dist
 
     def forward_branch(self, branch: str, obs_feats, deterministic=False, use_grad=True, use_distribution=False):
         try:
@@ -97,7 +115,7 @@ class StatePipeline(nn.Module):
             print(f"No branch {branch} in pipeline")
             return None
 
-        if not use_distribution:
+        if not use_distribution and self.is_stochastic:
             return self.forward_distribution(out, deterministic, use_grad)
 
         return out
@@ -121,8 +139,10 @@ class StatePipeline(nn.Module):
             transform = self.forward_critic
 
         z = transform(obs_feats, deterministic, use_grad)
+
         if self.is_stochastic:
             z = th.tanh(z)
+
         return z
 
     def __repr__(self) -> str:

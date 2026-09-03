@@ -170,7 +170,7 @@ class SRLSAC(SAC, SRLAlgorithm):
             if self.policy.srl_joint_optimization:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
-                self.policy.update_srl(critic_loss + rep_loss)
+                self.policy.update_srl(rep_loss, critic_loss=critic_loss)
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()

@@ -106,7 +106,6 @@ class SRLTD3(TD3, SRLAlgorithm):
 
                 # Compute the next Q-values: min over all critics targets
                 next_q_values = th.cat(self.critic_target(next_obs_z, next_actions), dim=1)
-                next_v_values, _ = th.max(next_q_values, dim=1, keepdim=True)
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
@@ -131,7 +130,7 @@ class SRLTD3(TD3, SRLAlgorithm):
             if self.policy.srl_joint_optimization:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
-                self.policy.update_srl(critic_loss + rep_loss)
+                self.policy.update_srl(rep_loss, critic_loss=critic_loss)
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()

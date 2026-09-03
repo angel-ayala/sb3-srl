@@ -9,9 +9,9 @@ Created on Wed Aug 26 12:33:26 2026
 from __future__ import annotations
 from typing import Any, Optional
 
+import math
 from stable_baselines3.common.logger import Image as ImageLogger
 import torch as th
-from torch import nn
 import torchvision
 import torch.distributions as D
 from torch.nn import functional as F
@@ -124,23 +124,9 @@ class InfoSPRLoss(RepresentationLoss):
 
         # compare next_latent with transition
         if self.model.is_stochastic:
-            with th.no_grad():
-                # Current-state uncertainty
-                entropy = obs_z.entropy().mean()
-                self.log("z_entropy", entropy.item())
-
-                # Entropy-controlled target variance
-                # scale = th.exp(-1e-4 * entropy)
-                scale = 1 + 1e-4 * entropy
-                self.log("z_entropy_scale", scale.item())
-
-                target_std = obs_z1.stddev * scale
-                obs_z1 = self.model.pipeline.create_probability(obs_z1.mean, target_std)
-
             # Kullback-Leibler
             srl_loss = D.kl.kl_divergence(obs_z1, obs_z1_hat).mean()
             self.log("kl_loss", srl_loss.item())
-
             # mean value for L2
             obs_z = obs_z.mean
         else:
