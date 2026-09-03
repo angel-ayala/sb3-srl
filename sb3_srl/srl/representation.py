@@ -259,6 +259,7 @@ class RepresentationLoss:
     def to(self, device) -> None:
         for module in self._modules.values():
             module.to(device)
+
         for module in self._target_modules.values():
             module.to(device)
 
