@@ -365,9 +365,9 @@ def args2logpath(args, algo, env_name=None):
         path_suffix += '-blnc'
     
     if args.enc_max_gradn is not None:
-        path_suffix = f"-gradn{args.enc_max_gradn:.1f}"
+        path_suffix += f"-gradn{args.enc_max_gradn:.1f}"
 
-    if args.entropy_beta != 0:
+    if args.entropy_beta != 0 and args.use_stochastic:
         entropy_suffix = f"eb{args.entropy_beta:.0e}".replace('-', '')
         path_suffix += f"-{entropy_suffix}"
 
