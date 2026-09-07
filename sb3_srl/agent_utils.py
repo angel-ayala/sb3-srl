@@ -125,6 +125,8 @@ def parse_srl_args(parser):
 
     arg_srl.add_argument("--loss-balancer", action='store_true',
                          help='Use a gradient normalization to balance critic and representation impact.')
+    arg_srl.add_argument("--enc-max-gradn", type=float, default=None,
+                         help='Max value for grad_norm clip of Encoder.')
     arg_srl.add_argument("--entropy-beta", type=float, default=0,
                          help='Scalar factor for entropy scale of next-state distribution.')
     return arg_srl
@@ -236,7 +238,7 @@ def args2pipeline(args, env_params):
     #     fusion = 'crossatt'
     # if _args.get('fusion_mamba', False):
     #     fusion = 'mamba'
-    
+
     if fusion is not None and "F" not in functions:
         functions.insert(0, "F")
     if fusion is None and "F" in functions:
@@ -285,6 +287,9 @@ def args2srl_config(args, env_params):
         loss_args['decoder_lambda'] = _args.get('decoder_lambda', 1e-6)
         # loss_args['decoder_weight_decay'] = _args.get('decoder_weight_decay', 1e-7)
 
+    loss_args['with_balancer'] = _args.get('loss_balancer', False)
+    loss_args['enc_max_gradn'] = _args.get('enc_max_gradn', None)
+
     if _args.get('model_reconstruction', False):
         loss_name = 'Reconstruction'
         model_name = loss_name
@@ -321,7 +326,6 @@ def args2srl_config(args, env_params):
         'is_stochastic': _args.get('use_stochastic', False),
         'joint_optimization': _args.get('joint_optimization', False),
         'entropy_beta': _args.get('entropy_beta', 0),
-        'with_balancer': _args.get('loss_balancer', False),
     }
 
     return {'model': model_name, 'config': srl_config}
@@ -359,10 +363,14 @@ def args2logpath(args, algo, env_name=None):
         path_suffix += '-joint'
     if args.loss_balancer:
         path_suffix += '-blnc'
+    
+    if args.enc_max_gradn is not None:
+        path_suffix = f"-gradn{args.enc_max_gradn:.1f}"
+
     if args.entropy_beta != 0:
         entropy_suffix = f"eb{args.entropy_beta:.0e}".replace('-', '')
         path_suffix += f"-{entropy_suffix}"
-    
+
     pipeline_suffix = ''
     arg_pipeline = args.pipeline.upper()
     functions = arg_pipeline.split(',')
@@ -379,7 +387,7 @@ def args2logpath(args, algo, env_name=None):
         fusion_suffix += '-ffilm'
     if args.fusion_crossatt:
         fusion_suffix += '-fcrossatt'
-    
+
     if fusion_suffix != '' and "F" not in functions:
         functions.insert(0, "F")
 

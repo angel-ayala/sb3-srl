@@ -138,8 +138,7 @@ class RepresentationFactory:
             pipeline=pipeline,
             decoder=decoder,
             joint_optimization=model_config["joint_optimization"],
-            entropy_beta=model_config["entropy_beta"],
-            with_balancer=model_config["with_balancer"]
+            entropy_beta=model_config["entropy_beta"]
         )
 
         model.create_target()

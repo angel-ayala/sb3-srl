@@ -44,6 +44,8 @@ class RepresentationLoss:
         # decoder_weight_decay: Optional[float] = None, # custom adam param
         optimizer_class: th.optim.Optimizer = th.optim.Adam,
         optimizer_kwargs: Optional[dict[str, Any]] = None,
+        with_balancer: bool = False,
+        enc_max_gradn: Optional[float] = None
     ):
         self.model: Optional["RepresentationModel"] = None
 
@@ -59,6 +61,9 @@ class RepresentationLoss:
         self._modules: dict[str, nn.Module] = {}
         self._target_modules: dict[str, nn.Module] = {}
         self._parameter_groups: dict[str, list[nn.Parameter]] = {}
+
+        self.balancer = GradientBalancer() if with_balancer else None
+        self.enc_max_grad_norm = enc_max_gradn
 
     def log(self, tag, value):
         self.model.log(tag, value)
@@ -190,8 +195,8 @@ class RepresentationLoss:
         """
         srl_weight = 1
 
-        if self.model.balancer is not None:
-            srl_weight = self.model.balancer.update_weight(
+        if self.balancer is not None:
+            srl_weight = self.balancer.update_weight(
                 critic_loss, rep_loss, self.model.encoder.parameters())
 
         self.log("srl_weight", srl_weight)
@@ -204,6 +209,13 @@ class RepresentationLoss:
             total_loss += critic_loss
 
         self.backward(total_loss)
+
+        if self.enc_max_grad_norm is not None:
+            encoder_grad_norm = th.nn.utils.clip_grad_norm_(
+                self.model.encoder.parameters(),
+                self.enc_max_grad_norm,
+            )
+            self.log("encoder_grad_norm", encoder_grad_norm.mean().item())
 
         if update:
             self.step()
@@ -267,7 +279,9 @@ class RepresentationLoss:
         groups = ", ".join(self._parameter_groups.keys())
         return (
             f"{self.__class__.__name__}("
-            f"optimizer_groups=[{groups}])"
+            f"optimizer_groups=[{groups}], "
+            f"with_balancer={self.balancer is not None}, "
+            f"enc_max_gradn={self.enc_max_grad_norm})"
         )
 
 
@@ -281,8 +295,7 @@ class RepresentationModel:
                  pipeline: StatePipeline,
                  decoder: Optional[BaseDecoder],
                  joint_optimization: bool = False,
-                 entropy_beta: float = 0.05,
-                 with_balancer: bool = False):
+                 entropy_beta: float = 0.05):
         self._log_fn = None
         self.type = model_type
         self.joint_optimization = joint_optimization
@@ -295,10 +308,6 @@ class RepresentationModel:
         loss.attach(self)
         self.loss: RepresentationLoss = loss
         self.entropy_beta = entropy_beta
-
-        self.balancer = None
-        if with_balancer:
-            self.balancer = GradientBalancer()
 
     @property
     def latent_dim(self) -> int | tuple[int, ...]:
@@ -424,5 +433,4 @@ class RepresentationModel:
         out_str += str(self.loss)
         out_str += f'\nis_stochastic={self.is_stochastic},'
         out_str += f'\nentropy_beta={self.entropy_beta},'
-        out_str += f'\nwith_balancer={self.balancer is not None},'
         return out_str
