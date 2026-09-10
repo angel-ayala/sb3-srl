@@ -59,8 +59,6 @@ class SRLSACPolicy(SACPolicy, SRLPolicy):
         return ContinuousCritic(**critic_kwargs).to(self.device)
 
 
-
-
 class SRLSAC(SAC, SRLAlgorithm):
 
     def _create_aliases(self) -> None:

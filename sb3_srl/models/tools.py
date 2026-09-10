@@ -9,7 +9,7 @@ Created on Thu Sep  3 09:42:52 2026
 import torch as th
 
 class GradientBalancer:
-    def __init__(self, min_weight=0.01, max_weight=100.0, eps=1e-8):
+    def __init__(self, min_weight=1e-6, max_weight=1e6, eps=1e-8):
         self.min_weight = min_weight
         self.max_weight = max_weight
         self.eps = eps
