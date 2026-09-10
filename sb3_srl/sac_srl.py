@@ -26,21 +26,27 @@ from sb3_srl.utils import DictFlattenExtractor
 
 
 class SRLSACPolicy(SACPolicy, SRLPolicy):
-    def __init__(self, *args,
-                 ae_config: dict = {},
-                 encoder_tau: float = 0.999, **kwargs):
+    def __init__(self, *args, srl_config=None, **kwargs):
         kwargs['features_extractor_class'] = DictFlattenExtractor
-        SRLPolicy.__init__(self, ae_config, encoder_tau)
-        SACPolicy.__init__(self, *args, **kwargs)
+        SRLPolicy.__init__(self, srl_config)
+        SACPolicy.__init__(self, *args, **kwargs,)
 
     def _build(self, lr_schedule):
-        SRLPolicy._build(self, lr_schedule)
+        SRLPolicy._build_srl(self)
         SACPolicy._build(self, lr_schedule)
+
+    def _predict(self, observation, deterministic: bool = False) -> th.Tensor:
+        obs_z = self._predict_srl(observation, deterministic)
+        return SACPolicy._predict(self, obs_z, deterministic)
 
     def _get_constructor_parameters(self) -> dict[str, Any]:
         data = SACPolicy._get_constructor_parameters(self)
         data.update(SRLPolicy._get_constructor_parameters(self))
         return data
+
+    def set_training_mode(self, mode: bool) -> None:
+        SACPolicy.set_training_mode(self, mode)
+        SRLPolicy.set_srl_training_mode(self, mode)
 
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
@@ -52,37 +58,31 @@ class SRLSACPolicy(SACPolicy, SRLPolicy):
         critic_kwargs["features_dim"] = self.rep_model.z_dim
         return ContinuousCritic(**critic_kwargs).to(self.device)
 
-    def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
-        obs_z = SRLPolicy._predict(self, observation, deterministic)
-        return SACPolicy._predict(self, obs_z, deterministic)
 
-    def set_training_mode(self, mode: bool) -> None:
-        SACPolicy.set_training_mode(self, mode)
-        SRLPolicy.set_training_mode(self, mode)
 
 
 class SRLSAC(SAC, SRLAlgorithm):
 
     def _create_aliases(self) -> None:
         SAC._create_aliases(self)
-        SRLAlgorithm._create_aliases(self)
+        SRLAlgorithm._create_srl_aliases(self)
 
     def _setup_model(self) -> None:
         SAC._setup_model(self)
-        SRLAlgorithm._setup_model(self)
+        SRLAlgorithm._setup_srl(self)
 
     def _excluded_save_params(self) -> list[str]:
         return SAC._excluded_save_params(self) + \
-            SRLAlgorithm._excluded_save_params(self)
+            SRLAlgorithm._excluded_srl_save_params(self)
 
     def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
         state_dicts1, extra1 = SAC._get_torch_save_params(self)
-        state_dicts2, extra2 = SRLAlgorithm._get_torch_save_params(self)
+        state_dicts2, extra2 = SRLAlgorithm._get_srl_torch_save_params(self)
         state_dicts = state_dicts1 + state_dicts2
         extra = extra1 + extra2
         return state_dicts, extra
 
-    def train(self, gradient_steps: int, batch_size: int = 64) -> None:
+    def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
         self.policy.logger_append(self.logger, 'train_srl/')
@@ -176,7 +176,7 @@ class SRLSAC(SAC, SRLAlgorithm):
                 self.critic.optimizer.zero_grad()
                 critic_loss.backward() # Optimize the critics first
                 self.critic.optimizer.step()
-                self.policy.rep_model.update_representation(rep_loss)
+                self.policy.update_srl(rep_loss)
 
             # Compute actor loss
             # Alternative: actor_loss = th.mean(log_prob - qf1_pi)
