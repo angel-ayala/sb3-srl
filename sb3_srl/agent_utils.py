@@ -148,9 +148,8 @@ def parse_stochastic_args(arg_srl):
 
 
 
-def update_dimensions(args, params, obs_size):
+def update_dimensions(obs_prop, params, obs_size):
     # replace dimension values with proportions relative to observation
-    obs_prop = args["feat_lat_prop"]
     if obs_prop is not None:
         if ":" not in obs_prop:
             raise ValueError("Proportion must be split by ':' symbol")
@@ -202,7 +201,7 @@ def args2encoder(args, env_params):
         params['features_dim'] = 512
         params['normalized_image'] = False
 
-    update_dimensions(_args, params, env_params['state_shape'][-1])
+    update_dimensions(_args.get('feat_lat_propr'), params, env_params['state_shape'][-1])
 
     return encoder, params
 
@@ -217,7 +216,7 @@ def args2decoder(args, env_params):
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
 
-    update_dimensions(_args, params, env_params['state_shape'][-1])
+    update_dimensions(_args.get('feat_lat_propr'), params, env_params['state_shape'][-1])
 
     decoder = 'Vector'
 
@@ -256,7 +255,7 @@ def args2pipeline(args, env_params):
 
     rep_function = "R:"
     rep_params = {'latent_dim': _args.get('latent_dim', 32)}
-    update_dimensions(_args, rep_params, env_params['state_shape'][-1])
+    update_dimensions(_args.get('feat_lat_propr'), rep_params, env_params['state_shape'][-1])
 
     if not _args.get('use_stochastic', False):
         rep_function += "Det"
