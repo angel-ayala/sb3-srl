@@ -374,6 +374,12 @@ def args2logpath(args, algo, env_name=None):
     pipeline_suffix = ''
     arg_pipeline = args.pipeline.upper()
     functions = arg_pipeline.split(',')
+    
+    # feature dim
+    if args.feature_dim != 32:
+        path_suffix += f'-feat{args.feature_dim}'
+    if args.latent_dim != 32:
+        path_suffix += f'-ltn{args.latent_dim}'
 
     fusion_suffix = ''
     # fusion labels
@@ -425,3 +431,4 @@ def load_json_dict(json_path):
     with open(json_path, 'r') as jfile:
         json_dict = json.load(jfile)
     return json_dict
+
