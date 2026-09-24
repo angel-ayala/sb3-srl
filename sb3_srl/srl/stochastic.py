@@ -7,6 +7,7 @@ Created on Tue Aug 25 00:00:34 2026
 """
 from typing import Optional
 from enum import Enum
+import math
 import torch as th
 from torch import nn
 import torch.distributions as D
@@ -85,8 +86,8 @@ class NormalDistributionHead(BaseFunction):
         if self.std_min is None or self.std_max is None:
             return log_var
 
-        log_var_min = th.log(self.std_min ** 2)
-        log_var_max = th.log(self.std_max ** 2)
+        log_var_min = math.log(self.std_min ** 2)
+        log_var_max = math.log(self.std_max ** 2)
 
         center = (log_var_max + log_var_min) / 2
         scale = (log_var_max - log_var_min) / 2
@@ -194,6 +195,7 @@ class NormalizedLogVarBoundedDistribution(NormalDistributionHead):
             std_max=10.0,
         )
 
+
 STCH_HEADS = {
     "NormalizedUnbounded": NormalizedUnboundedDistribution,
     "Bounded": BoundedDistribution,
@@ -201,6 +203,7 @@ STCH_HEADS = {
     "LogVarBounded": LogVarBoundedDistribution,
     "NormalizedLogVarBounded": NormalizedLogVarBoundedDistribution,
 }
+
 
 class StochasticRepresentation(RepresentationLayer):
     
