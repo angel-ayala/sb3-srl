@@ -129,7 +129,28 @@ def parse_srl_args(parser):
                          help='Max value for grad_norm clip of Encoder.')
     arg_srl.add_argument("--entropy-beta", type=float, default=0,
                          help='Scalar factor for entropy scale of next-state distribution.')
+    arg_srl.add_argument("--feat-lat-prop", type=str, default=None,
+                         help='Proportion for the feature and latent dimension size relative to observation.')
     return arg_srl
+
+
+def update_dimensions(args, params, obs_size):
+    # replace dimension values with proportions relative to observation
+    obs_prop = args["feat_lat_prop"]
+    if obs_prop is not None:
+        if ":" not in obs_prop:
+            raise ValueError("Proportion must be split by ':' symbol")
+
+        props = obs_prop.split(":")
+        if len(props) > 2:
+            raise ValueError("Too many values, only two proportions are required, try 1:1")
+
+        feat_prop, latent_prop = props
+        if 'feature_dim' in params.keys():
+            params['feature_dim'] = round(float(feat_prop) * obs_size)
+
+        if 'latent_dim' in params.keys():
+            params['latent_dim'] = round(float(latent_prop) * obs_size)
 
 
 def args2encoder(args, env_params):
@@ -142,7 +163,7 @@ def args2encoder(args, env_params):
         'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
-
+    
     encoder = 'Vector'
 
     if _args.get('model_proprio', False):
@@ -167,6 +188,8 @@ def args2encoder(args, env_params):
         params['features_dim'] = 512
         params['normalized_image'] = False
 
+    update_dimensions(_args, params, env_params['state_shape'][-1])
+
     return encoder, params
 
 
@@ -179,6 +202,8 @@ def args2decoder(args, env_params):
         'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
+    
+    update_dimensions(_args, params, env_params['state_shape'][-1])
 
     decoder = 'Vector'
 
@@ -376,10 +401,11 @@ def args2logpath(args, algo, env_name=None):
     functions = arg_pipeline.split(',')
     
     # feature dim
-    if args.feature_dim != 32:
+    if args.feat_lat_prop is None:
         path_suffix += f'-feat{args.feature_dim}'
-    if args.latent_dim != 32:
         path_suffix += f'-ltn{args.latent_dim}'
+    else:
+        path_suffix += f'-feat:ltn-{args.feat_lat_prop}'
 
     fusion_suffix = ''
     # fusion labels
