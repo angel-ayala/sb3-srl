@@ -6,7 +6,6 @@ Created on Thu Feb  6 11:33:38 2025
 @author: angel
 """
 import torch as th
-from torch.nn import functional as F
 from sklearn.feature_selection import mutual_info_regression
 from info_nce import InfoNCE
 

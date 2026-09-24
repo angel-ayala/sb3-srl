@@ -26,68 +26,64 @@ from sb3_srl.utils import DictFlattenExtractor
 
 
 class SRLSACPolicy(SACPolicy, SRLPolicy):
-    def __init__(self, *args,
-                 ae_config: dict = {},
-                 encoder_tau: float = 0.999, **kwargs):
+    def __init__(self, *args, srl_config=None, **kwargs):
         kwargs['features_extractor_class'] = DictFlattenExtractor
-        SRLPolicy.__init__(self, ae_config, encoder_tau)
-        SACPolicy.__init__(self, *args, **kwargs)
+        SRLPolicy.__init__(self, srl_config)
+        SACPolicy.__init__(self, *args, **kwargs,)
 
     def _build(self, lr_schedule):
-        SRLPolicy._build(self, lr_schedule)
+        SRLPolicy._build_srl(self)
         SACPolicy._build(self, lr_schedule)
+
+    def _predict(self, observation, deterministic: bool = False) -> th.Tensor:
+        obs_z = self._predict_srl(observation, deterministic)
+        return SACPolicy._predict(self, obs_z, deterministic)
 
     def _get_constructor_parameters(self) -> dict[str, Any]:
         data = SACPolicy._get_constructor_parameters(self)
         data.update(SRLPolicy._get_constructor_parameters(self))
         return data
 
+    def set_training_mode(self, mode: bool) -> None:
+        SACPolicy.set_training_mode(self, mode)
+        SRLPolicy.set_srl_training_mode(self, mode)
+
     def make_actor(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> Actor:
         actor_kwargs = self._update_features_extractor(self.actor_kwargs, features_extractor)
-        actor_kwargs["features_dim"] = self.latent_dim
+        actor_kwargs["features_dim"] = self.rep_model.z_dim
         return Actor(**actor_kwargs).to(self.device)
 
     def make_critic(self, features_extractor: Optional[BaseFeaturesExtractor] = None) -> ContinuousCritic:
         critic_kwargs = self._update_features_extractor(self.critic_kwargs, features_extractor)
-        critic_kwargs["features_dim"] = self.latent_dim
+        critic_kwargs["features_dim"] = self.rep_model.z_dim
         return ContinuousCritic(**critic_kwargs).to(self.device)
-
-    def _predict(self, observation: PyTorchObs, deterministic: bool = False) -> th.Tensor:
-        obs_z = SRLPolicy._predict(self, observation, deterministic)
-        return SACPolicy._predict(self, obs_z, deterministic)
-
-    def set_training_mode(self, mode: bool) -> None:
-        SACPolicy.set_training_mode(self, mode)
-        SRLPolicy.set_training_mode(self, mode)
 
 
 class SRLSAC(SAC, SRLAlgorithm):
-    def __init__(self, *args, **kwargs):
-        SAC.__init__(self, *args, **kwargs)
 
     def _create_aliases(self) -> None:
         SAC._create_aliases(self)
-        SRLAlgorithm._create_aliases(self)
+        SRLAlgorithm._create_srl_aliases(self)
 
     def _setup_model(self) -> None:
         SAC._setup_model(self)
-        SRLAlgorithm._setup_model(self)
+        SRLAlgorithm._setup_srl(self)
 
     def _excluded_save_params(self) -> list[str]:
         return SAC._excluded_save_params(self) + \
-            SRLAlgorithm._excluded_save_params(self)
+            SRLAlgorithm._excluded_srl_save_params(self)
 
     def _get_torch_save_params(self) -> tuple[list[str], list[str]]:
         state_dicts1, extra1 = SAC._get_torch_save_params(self)
-        state_dicts2, extra2 = SRLAlgorithm._get_torch_save_params(self)
+        state_dicts2, extra2 = SRLAlgorithm._get_srl_torch_save_params(self)
         state_dicts = state_dicts1 + state_dicts2
         extra = extra1 + extra2
         return state_dicts, extra
 
-    def train(self, gradient_steps: int, batch_size: int = 64) -> None:
+    def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
-        self.policy.logger_append(self.logger, 'train/')
+        self.policy.logger_append(self.logger, 'train_srl/')
 
         # Update optimizers learning rate
         optimizers = [self.actor.optimizer, self.critic.optimizer]
@@ -145,14 +141,14 @@ class SRLSAC(SAC, SRLAlgorithm):
                 next_q_values = th.cat(self.critic_target(next_obs_z, next_actions), dim=1)
                 # entropy term
                 entropy = ent_coef * next_log_prob.reshape(-1, 1)
-                next_v_values = th.max(next_q_values, dim=1, keepdim=True)[0] - entropy
+                # next_v_values = th.max(next_q_values, dim=1, keepdim=True)[0] - entropy
                 next_q_values = th.min(next_q_values, dim=1, keepdim=True)[0] - entropy
                 # td error + entropy term
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
             # Get current Q-values estimates for each critic network
             # using action from the replay buffer
-            if self.policy.rep_model.joint_optimization:
+            if self.policy.srl_joint_optimization:
                 obs_z = self.forward_z(replay_data.observations, use_grad=True)
             current_q_values = self.critic(obs_z, replay_data.actions)
 
@@ -166,35 +162,25 @@ class SRLSAC(SAC, SRLAlgorithm):
             adv_values.append(adv.mean().item())
 
             # Compute reconstruction loss
-            rep_loss = self.policy.rep_model.compute_representation_loss(
+            rep_loss = self.policy.compute_srl_loss(
                 replay_data.observations, replay_data.actions, replay_data.next_observations)
-            if self.policy.rep_model.is_introspection:
-                rep_loss += self.policy.rep_model.compute_success_loss(
-                    obs_z, replay_data.actions, Q_min,
-                    next_v_values, replay_data.dones)
-            # if self.policy.rep_model.is_multimodal:
-            #     rep_loss += self.policy.rep_model.compute_modal_loss(replay_data.observations)
 
-            if self.policy.rep_model.joint_optimization:
+            if self.policy.srl_joint_optimization:
                 # Optimize the critics and representation
                 self.critic.optimizer.zero_grad()
-                self.policy.rep_model.update_representation(critic_loss + rep_loss)
+                self.policy.update_srl(rep_loss, critic_loss=critic_loss)
                 self.critic.optimizer.step()
             else:
                 self.critic.optimizer.zero_grad()
-                if hasattr(self.policy.rep_model, "fuse_optim_zero_grad"):
-                    self.policy.rep_model.fuse_optim_zero_grad()
                 critic_loss.backward() # Optimize the critics first
                 self.critic.optimizer.step()
-                if hasattr(self.policy.rep_model, "fuse_optim_step"):
-                    self.policy.rep_model.fuse_optim_step()
-                self.policy.rep_model.update_representation(rep_loss)
+                self.policy.update_srl(rep_loss)
 
             # Compute actor loss
             # Alternative: actor_loss = th.mean(log_prob - qf1_pi)
             # Min over all critic networks
             # Update target first
-            self.update_encoder_target()
+            self.update_srl_target()
             with th.no_grad():
                 _obs_z = self.target_forward_z(replay_data.observations)
             actions_pi, log_prob = self.actor.action_log_prob(_obs_z)
