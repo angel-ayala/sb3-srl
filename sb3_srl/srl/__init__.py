@@ -103,14 +103,9 @@ class RepresentationFactory:
         return create_encoder(name, params)
 
     @staticmethod
-    def create_decoder(config, is_stochastic=False):
+    def create_decoder(config):
         name, params = config
-        decoder = create_decoder(name, params)
-
-        if is_stochastic:
-            decoder = StochasticWrapper(decoder, None)
-
-        return decoder
+        return create_decoder(name, params)
 
     @staticmethod
     def create_loss(config):
@@ -136,8 +131,10 @@ class RepresentationFactory:
                 print(f"Warning! pipeline.latent_dim ({pipeline.latent_dim}) != encoder.latent_dim ({encoder.latent_dim})")
                 decoder_config[1]["with_fusion"] = True
                 decoder_config[1]["latent_dim"] = pipeline.latent_dim
-            decoder = cls.create_decoder(
-                decoder_config, model_config["is_stochastic"])
+            decoder = cls.create_decoder(decoder_config)
+
+            if model_config["is_stochastic"]:
+                decoder = StochasticWrapper(decoder, pipeline.rep_head_name, None)
 
         model = RepresentationModel(
             model_type=srl_config["model"],

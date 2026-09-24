@@ -203,20 +203,24 @@ STCH_HEADS = {
 }
 
 class StochasticRepresentation(RepresentationLayer):
-
-    def _instance_model(self, z_dim):
-        if self.rep_head is None:
+    
+    @staticmethod
+    def instance_dist_head(model_name, params):
+        if model_name is None:
             print("No head defined, using NormalizedUnboundedDistribution")
-            return NormalizedUnboundedDistribution(z_dim)
+            return NormalizedUnboundedDistribution(**params)
 
         try:
-            dist_head = STCH_HEADS[self.rep_head]
+            dist_head = STCH_HEADS[model_name]
         except KeyError:
             raise ValueError(
-                f"Representation function '{self.rep_head}' not registered. "
+                f"Representation function '{model_name}' not registered. "
                 f"Available: {list(STCH_HEADS)}"
             )
-        return dist_head(z_dim)
+        return dist_head(**params)
+
+    def _instance_model(self, z_dim):
+        return self.instance_dist_head(self.rep_head, {'z_dim': z_dim})
 
     def forward(self, obs_feats):
         if isinstance(obs_feats, tuple):
@@ -240,11 +244,12 @@ class StochasticRepresentation(RepresentationLayer):
 
 
 class StochasticWrapper(nn.Module):
-    def __init__(self, model: BaseFunction, pre_act: nn.Module = nn.LeakyReLU):
+    def __init__(self, model: BaseFunction, rep_head: str = None, pre_act: nn.Module = nn.LeakyReLU):
         super().__init__()
         self.model = model
         self.replaced_head = False
-        prob_model = NormalizedUnboundedDistribution(model.output_dim, pre_act)
+        prob_model = StochasticRepresentation.instance_dist_head(
+            rep_head, {'z_dim': model.output_dim, 'pre_act': pre_act})
         if isinstance(model, BaseDecoder):
             del self.model.projection
             self.model.projection = prob_model
@@ -264,9 +269,10 @@ class StochasticWrapper(nn.Module):
         return self.prob_model.forward_dist(*params)  # return distribution object by default
 
     def __repr__(self) -> str:
+        head_model = self.model.projection if self.replaced_head else self.prob_model
         return (
             f"{self.__class__.__name__}("
             f"model={self.model.__class__.__name__},"
-            f"head={NormalDistributionHead.__name__})\n"
+            f"head={head_model.__class__.__name__})\n"
             f"{super().__repr__()}"
         )

@@ -137,7 +137,6 @@ def parse_srl_args(parser):
 def parse_stochastic_args(arg_srl):
     arg_srl.add_argument("--use-stochastic", action='store_true',
                          help='Whether if use the Stochastic version model.')
-
     arg_srl.add_argument("--dist-bound", action='store_true',
                          help='The bounded distribution head.')
     arg_srl.add_argument("--dist-bound-norm", action='store_true',

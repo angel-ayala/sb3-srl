@@ -57,12 +57,14 @@ class StatePipeline(nn.Module):
         self.configuration = configuration
         self.is_stochastic = False
         self.id_rep_layer = -1
+        self.rep_head_name = None
 
         for i, (model, params) in enumerate(configuration[list(configuration.keys())[0]]):
             model_name = model.lower()
             if "r:" in model_name:
                 self.id_rep_layer = i
                 self.is_stochastic = "stch" in model_name
+                self.rep_head_name = params['rep_head']
 
     @property
     def n_branches(self):
