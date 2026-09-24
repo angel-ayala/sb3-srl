@@ -82,20 +82,12 @@ def create_decoder(name: str, params: dict) -> BaseDecoder:
     return decoder_class(**params)
 
 
-def create_function_model(name: str, params: dict) -> BaseFunction:
-    assert ":" in name, f"Bad function model format: {name}"
-    model_name = name.lower().split(":")
-    model_type = model_name[0]
-    model_name = model_name[1]
-    # if model_type == "a":
-    #     return ATTENTION[model_name]
-    if model_type == "f":
-        try:
-            fusion_class = FUSION[model_name]
-        except KeyError:
-            raise ValueError(
-                f"Fusion '{model_name}' not registered. "
-                f"Available: {list(FUSION)}"
-            )
-        return fusion_class(**params)
-    raise NotImplementedError(f"Model type {name} not found!")
+def create_fusion_model(model_name: str, params: dict) -> BaseFunction:
+    try:
+        fusion_class = FUSION[model_name]
+    except KeyError:
+        raise ValueError(
+            f"Fusion '{model_name}' not registered. "
+            f"Available: {list(FUSION)}"
+        )
+    return fusion_class(**params)

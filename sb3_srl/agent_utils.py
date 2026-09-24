@@ -89,8 +89,8 @@ def parse_srl_args(parser):
                          help='Whether if use the SRL loss.')
     arg_srl.add_argument("--joint-optimization", action='store_true',
                          help='Whether if jointly optimize representation with RL updates.')
-    arg_srl.add_argument("--use-stochastic", action='store_true',
-                         help='Whether if use the Stochastic version model.')
+
+    parse_stochastic_args(arg_srl)
 
     arg_srl.add_argument("--model-reconstruction", action='store_true',
                          help='Whether if use the Reconstruction model.')
@@ -134,6 +134,21 @@ def parse_srl_args(parser):
     return arg_srl
 
 
+def parse_stochastic_args(arg_srl):
+    arg_srl.add_argument("--use-stochastic", action='store_true',
+                         help='Whether if use the Stochastic version model.')
+
+    arg_srl.add_argument("--dist-bound", action='store_true',
+                         help='The bounded distribution head.')
+    arg_srl.add_argument("--dist-bound-norm", action='store_true',
+                         help='The bounded distribution head.')
+    arg_srl.add_argument("--dist-bound-logvar", action='store_true',
+                         help='The bounded distribution head.')
+    arg_srl.add_argument("--dist-bound-logvar-norm", action='store_true',
+                         help='The bounded distribution head.')
+
+
+
 def update_dimensions(args, params, obs_size):
     # replace dimension values with proportions relative to observation
     obs_prop = args["feat_lat_prop"]
@@ -163,7 +178,7 @@ def args2encoder(args, env_params):
         'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
-    
+
     encoder = 'Vector'
 
     if _args.get('model_proprio', False):
@@ -202,7 +217,7 @@ def args2decoder(args, env_params):
         'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
-    
+
     update_dimensions(_args, params, env_params['state_shape'][-1])
 
     decoder = 'Vector'
@@ -240,47 +255,66 @@ def args2pipeline(args, env_params):
     if not isinstance(_args, dict):
         _args = vars(_args)
 
-    pipeline = {'representation': [("R:", {})]}
+    rep_function = "R:"
+    rep_params = {'latent_dim': _args.get('latent_dim', 32)}
+    update_dimensions(_args, rep_params, env_params['state_shape'][-1])
 
-    if not _args.get('model_proprio', False):
-        return pipeline
+    if not _args.get('use_stochastic', False):
+        rep_function += "Det"
+        rep_head = "NormTanh"
+    else:
+        rep_function += "Stch"
+        rep_head = "NormalizedUnbounded"
 
-    arg_pipeline = _args.get('pipeline', "R").upper()
-    functions = arg_pipeline.split(',')
+        if _args.get('dist_bound', False):
+            rep_head = "Bounded"
+        if _args.get('dist_bound_norm', False):
+            rep_head = "NormalizedBounded"
+        if _args.get('dist_bound_logvar', False):
+            rep_head = "LogVarBounded"
+        if _args.get('dist_bound_logvar-norm', False):
+            rep_head = "NormalizedLogVarBounded"
 
-    fusion, params = None, {}
-    params['latent_dim'] = _args.get('latent_dim', 32)
+    rep_params['rep_head'] = rep_head
+    pipeline = {'representation': [(rep_function, rep_params)]}
 
-    if _args.get('fusion_mlp', False):
-        fusion = 'mlp'
-    if _args.get('fusion_conv1d', False):
-        fusion = 'conv1d'
-    if _args.get('fusion_gated', False):
-        fusion = 'gated'
-    if _args.get('fusion_film', False):
-        fusion = 'film'
-    # if _args.get('fusion_crossatt', False):
-    #     fusion = 'crossatt'
-    # if _args.get('fusion_mamba', False):
-    #     fusion = 'mamba'
+    if _args.get('model_proprio', False):
+        arg_pipeline = _args.get('pipeline', "R").upper()
+        functions = arg_pipeline.split(',')
 
-    if fusion is not None and "F" not in functions:
-        functions.insert(0, "F")
-    if fusion is None and "F" in functions:
-        raise TypeError("No fusion model selected")
+        fusion, params = None, {}
+        params['latent_dim'] = _args.get('latent_dim', 32)
 
-    # enforce custom order
-    pipe_functions = []
-    for f in functions:
-        if f == "R":
-            pipe_functions.append(("R:", {}))
+        if _args.get('fusion_mlp', False):
+            fusion = 'mlp'
+        if _args.get('fusion_conv1d', False):
+            fusion = 'conv1d'
+        if _args.get('fusion_gated', False):
+            fusion = 'gated'
+        if _args.get('fusion_film', False):
+            fusion = 'film'
+        # if _args.get('fusion_crossatt', False):
+        #     fusion = 'crossatt'
+        # if _args.get('fusion_mamba', False):
+        #     fusion = 'mamba'
 
-        if f == "F":
-            fusion = "F:" + fusion
-            pipe_functions.append((fusion, params))
+        if fusion is not None and "F" not in functions:
+            functions.insert(0, "F")
+        if fusion is None and "F" in functions:
+            raise TypeError("No fusion model selected")
 
-        # if f == "A":
-    pipeline['representation'] = pipe_functions
+        # enforce custom order
+        pipe_functions = []
+        for f in functions:
+            if f == "R":
+                pipe_functions.append((rep_function, rep_params))
+
+            if f == "F":
+                fusion = "F:" + fusion
+                pipe_functions.append((fusion, params))
+
+            # if f == "A":
+        pipeline['representation'] = pipe_functions
 
     if _args.get('pipeline_branch', False):
         pipeline['critic'] = pipeline['representation'].copy()
@@ -388,24 +422,41 @@ def args2logpath(args, algo, env_name=None):
         path_suffix += '-joint'
     if args.loss_balancer:
         path_suffix += '-blnc'
-    
+
     if args.enc_max_gradn is not None:
         path_suffix += f"-gradn{args.enc_max_gradn:.1f}"
-
-    if args.entropy_beta != 0 and args.use_stochastic:
-        entropy_suffix = f"eb{args.entropy_beta:.0e}".replace('-', '')
-        path_suffix += f"-{entropy_suffix}"
 
     pipeline_suffix = ''
     arg_pipeline = args.pipeline.upper()
     functions = arg_pipeline.split(',')
-    
+
     # feature dim
     if args.feat_lat_prop is None:
         path_suffix += f'-feat{args.feature_dim}'
         path_suffix += f'-ltn{args.latent_dim}'
     else:
         path_suffix += f'-feat:ltn-{args.feat_lat_prop}'
+
+    if args.use_stochastic:
+        path_suffix += '-rstch'
+
+        # heads variations
+        if args.dist_bound:
+            path_suffix += "-distb"
+        if args.dist_bound_norm:
+            path_suffix += "-distnb"
+        if args.dist_bound_logvar:
+            path_suffix += "-distlv"
+        if args.dist_bound_logvar_norm:
+            path_suffix += "-distnlv"
+
+        # regularization
+        if args.entropy_beta != 0:
+            entropy_suffix = f"eb{args.entropy_beta:.0e}".replace('-', '')
+            path_suffix += f"-{entropy_suffix}"
+
+    else:
+        path_suffix += '-rdet'
 
     fusion_suffix = ''
     # fusion labels
@@ -424,11 +475,6 @@ def args2logpath(args, algo, env_name=None):
         functions.insert(0, "F")
 
     for f in functions:
-        if f == "R":
-            if args.use_stochastic:
-                pipeline_suffix += '-rstch'
-            else:
-                pipeline_suffix += '-rdet'
         if f == "F":
             pipeline_suffix += fusion_suffix
 

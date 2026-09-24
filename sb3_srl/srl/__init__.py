@@ -20,71 +20,79 @@ from stable_baselines3.common.utils import (
 from ..models import BaseFunction
 from ..models import create_encoder
 from ..models import create_decoder
-from ..models import create_function_model
-from .representation import RepresentationModel
+from ..models import create_fusion_model
+from .representation import RepresentationModel, RepresentationLayer
 from .losses import create_loss
-from .pipelines import StatePipeline, TransformationBranch, DeterministicRepresentation
+from .pipelines import StatePipeline, TransformationBranch
 from .stochastic import StochasticRepresentation, StochasticWrapper
 
 
 class StatePipelineFactory:
 
     @staticmethod
+    def create_model(name: str, params: dict) -> BaseFunction:
+        assert ":" in name, f"Bad function model format: {name}"
+        model_name = name.lower().split(":")
+        model_type = model_name[0]
+        model_name = model_name[1]
+        # if model_type == "a":
+        #     return create_attn_model(model_name, params)
+        if model_type == "r":
+            if model_name == 'stch':
+                rep = StochasticRepresentation(**params)
+            if model_name == 'det':
+                rep = RepresentationLayer(**params)
+            return rep
+        if model_type == "f":
+            return create_fusion_model(model_name, params)
+
+        raise NotImplementedError(f"Model type {name} not found!")
+
+    @staticmethod
     def create_branch(models: list[tuple[str, BaseFunction]],
-                      input_dim: int | tuple[int, ...],
-                      is_stochastic: bool = False
+                      input_dim: int | tuple[int, ...]
                       ) -> TransformationBranch:
         """
         A:XXXX -> Attention model
-        F:XXXX -> Fusion model
-        R:     -> Representation layer
+        F:YYYY -> Fusion model
+        R:ZZZZ -> Representation layer
         models:[
             ("A:CrossAtention", {params}),
-            ("F:MLP", {params})
+            ("F:MLP", {params}),
+            (("R:Det", {params}) | ("R:Stch", {params})),
         ]
         """
         stages = []
-        representation_dim = input_dim
 
         for model_name, model_params in models:
-            if "R:" in model_name:
-                if is_stochastic:
-                    stage = StochasticRepresentation(representation_dim, representation_dim, True)
-                else:
-                    stage = DeterministicRepresentation(representation_dim, representation_dim, True)
-            else:
-                stage = create_function_model(model_name, model_params)
-
+            stage = StatePipelineFactory.create_model(model_name, model_params)
             stages.append(stage)
-            representation_dim = stage.output_dim
 
         return TransformationBranch(stages)
 
     @classmethod
     def create(cls, configuration: dict[str, list[tuple]],
-               input_dim: int | tuple[int, ...],
-               is_stochastic: bool = False) -> StatePipeline:
+               input_dim: int | tuple[int, ...]) -> StatePipeline:
         """
         "representation" -> Representation model related
         "critic" -> Downstream task
         configuration:
             {
-                "representation": ["A:CrossAtention", "F:MLP"],
+                "representation": ["A:CrossAtention", "F:MLP", "R:Det"],
             }
 
             {
-                "representation": ["A:CrossAtention", "F:MLP"],
-                "critic": ["A:CrossAtention", "F:MLP"],
+                "representation": ["A:CrossAtention", "F:MLP", "R:Stch"],
+                "critic": ["A:CrossAtention", "F:MLP", "R:Stch"],
             }
         """
 
         branches = {}
 
         for branch_name, models in configuration.items():
-            branches[branch_name] = cls.create_branch(
-                models, input_dim, is_stochastic)
+            branches[branch_name] = cls.create_branch(models, input_dim)
 
-        return StatePipeline(branches, configuration, is_stochastic)
+        return StatePipeline(branches, configuration)
 
 
 class RepresentationFactory:
@@ -118,14 +126,14 @@ class RepresentationFactory:
         loss = cls.create_loss(model_config["loss"])
         pipeline = StatePipelineFactory.create(
             model_config["pipeline"],
-            encoder.latent_dim,
-            model_config["is_stochastic"]
+            encoder.latent_dim
         )
 
         decoder_config = model_config.get("decoder")
         if decoder_config is not None:
             # fusion layer present in pipeline
             if pipeline.latent_dim != encoder.latent_dim:
+                print(f"Warning! pipeline.latent_dim ({pipeline.latent_dim}) != encoder.latent_dim ({encoder.latent_dim})")
                 decoder_config[1]["with_fusion"] = True
                 decoder_config[1]["latent_dim"] = pipeline.latent_dim
             decoder = cls.create_decoder(

@@ -14,6 +14,7 @@ import torch as th
 from torch import nn
 from stable_baselines3.common.utils import polyak_update
 
+from ..models.base import BaseFunction
 from ..models import BaseEncoder
 from ..models import BaseDecoder
 from ..models.tools import GradientBalancer
@@ -434,3 +435,22 @@ class RepresentationModel:
         out_str += f'\nis_stochastic={self.is_stochastic},'
         out_str += f'\nentropy_beta={self.entropy_beta},'
         return out_str
+
+
+class RepresentationLayer(BaseFunction):
+
+    def __init__(self, latent_dim: int | tuple[int, ...], rep_head=None):
+        self.rep_head = rep_head
+        super().__init__(input_dim=latent_dim,
+                         output_dim=latent_dim,
+                         auto_setup=True)
+
+    def _instance_model(self, z_dim):
+        if self.rep_head is None:
+            print("No head defined, using nn.Identity")
+            return nn.Identity()
+
+        if self.rep_head == "NormTanh":
+            return nn.Sequential(nn.LayerNorm(z_dim), nn.Tanh())
+
+        return NotImplementedError("Representation function {self.rep_head} not found!")

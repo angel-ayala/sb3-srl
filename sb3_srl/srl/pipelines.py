@@ -11,13 +11,6 @@ import torch as th
 from torch import nn
 
 from ..models import BaseFunction
-from .stochastic import normal_independent_dist
-
-
-class DeterministicRepresentation(BaseFunction):
-
-    def _instance_model(self, z_dim):
-        return nn.Sequential(nn.LayerNorm(z_dim), nn.Tanh())
 
 
 class TransformationBranch(nn.Module):
@@ -56,14 +49,20 @@ class StatePipeline(nn.Module):
 
     def __init__(self,
                  branches: dict[str, TransformationBranch],
-                 configuration: dict,
-                 is_stochastic: bool = False
+                 configuration: dict
                  ):
         super().__init__()
 
         self.branches = nn.ModuleDict(branches)
         self.configuration = configuration
-        self.is_stochastic = is_stochastic
+        self.is_stochastic = False
+        self.id_rep_layer = -1
+
+        for i, (model, params) in enumerate(configuration[list(configuration.keys())[0]]):
+            model_name = model.lower()
+            if "r:" in model_name:
+                self.id_rep_layer = i
+                self.is_stochastic = "stch" in model_name
 
     @property
     def n_branches(self):
@@ -72,11 +71,17 @@ class StatePipeline(nn.Module):
     @property
     def branch_keys(self):
         return list(self.branches.keys())
+    
+    @property
+    def rep_layer(self):
+        if self.id_rep_layer != -1:
+            return self.branches["representation"].stages[self.id_rep_layer]
+        return ValueError("Representation layer not discovered!")
 
     @property
     def latent_dim(self):
         return self.branches["representation"].output_dim
-    
+
     def scale_probability(self, dist, entropy_beta=0.05):
         entropy_norm = None
         scale = None
@@ -87,7 +92,7 @@ class StatePipeline(nn.Module):
 
         if not self.is_stochastic:
             raise AttributeError("Entropy value only can be obtained from distribution objecto")
-            
+
         with th.no_grad():
             # Next-state uncertainty-aware
             entropy = dist.entropy().mean()
@@ -96,8 +101,8 @@ class StatePipeline(nn.Module):
             # Entropy-controlled target variance
             scale = 1 + entropy_norm * entropy_beta # 1e-3
             scale = scale.clamp(min=0.5, max=2.0)
-    
-            dist = normal_independent_dist(dist.mean, dist.stddev * scale)
+
+            dist = self.rep_layer.forward_dist(dist.mean, dist.stddev * scale)
         return dist, entropy_norm, scale
 
     def forward_distribution(self, obs_dist, deterministic=False, use_grad=True):
@@ -151,5 +156,7 @@ class StatePipeline(nn.Module):
             for name, branch in self.branches.items()
         }
         return (
-            f"{self.__class__.__name__}(configuration=[{configurations}])"
+            f"{self.__class__.__name__}(configuration=[{configurations}],"
+            f"is_stochastic={self.is_stochastic},"
+            f"id_rep_layer={self.id_rep_layer})"
         )
