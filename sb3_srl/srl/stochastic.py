@@ -72,6 +72,17 @@ class NormalDistributionHead(BaseFunction):
 
         return center + scale * th.tanh((mean - center) / scale)
 
+    def _bound_mean_softplus(self, mean):
+        # soft upper bound
+        if self.mean_max is not None:
+            mean = self.mean_max - F.softplus(self.mean_max - mean)
+
+        # soft lower bound
+        if self.mean_min is not None:
+            mean = self.mean_min + F.softplus(mean - self.mean_min)
+
+        return mean
+
     def _bound_std(self, std):
         # smooth bounding
         if self.std_max is not None:
@@ -94,14 +105,30 @@ class NormalDistributionHead(BaseFunction):
 
         return center + scale * th.tanh((log_var - center) / scale)
 
+    def _bound_log_var_softplus(self, log_var):
+        log_var_min = None
+        log_var_max = None
+
+        # soft upper bound
+        if self.std_max is not None:
+            log_var_max = math.log(self.std_max ** 2)
+            log_var = log_var_max - F.softplus(log_var_max - log_var)
+
+        # soft lower bound
+        if self.std_min is not None:
+            log_var_min = math.log(self.std_min ** 2)
+            log_var = log_var_min + F.softplus(log_var - log_var_min)
+
+        return log_var
+
     def forward_dist(self, mean, scale):
-        mean = self._bound_mean(mean)
+        mean = self._bound_mean_softplus(mean)
 
         if self.scale_parameterization == ScaleParameterization.STD:
             std = self._bound_std(scale)
 
         elif self.scale_parameterization == ScaleParameterization.LOG_VAR:
-            log_var = self._bound_log_var(scale)
+            log_var = self._bound_log_var_softplus(scale)
             std = th.exp(0.5 * log_var)
 
         else:
@@ -206,7 +233,7 @@ STCH_HEADS = {
 
 
 class StochasticRepresentation(RepresentationLayer):
-    
+
     @staticmethod
     def instance_dist_head(model_name, params):
         if model_name is None:
