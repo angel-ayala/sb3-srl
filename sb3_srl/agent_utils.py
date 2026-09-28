@@ -212,7 +212,7 @@ def args2decoder(args, env_params):
     params = {
         'state_shape': env_params['state_shape'],
         'action_shape': env_params['action_shape'],
-        'latent_dim': _args.get('latent_dim', 32),        
+        'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
 
@@ -266,7 +266,7 @@ def args2pipeline(args, env_params):
             rep_head = "NormalizedBounded"
         if _args.get('dist_bound_logvar', False):
             rep_head = "LogVarBounded"
-        if _args.get('dist_bound_logvar-norm', False):
+        if _args.get('dist_bound_logvar_norm', False):
             rep_head = "NormalizedLogVarBounded"
 
     rep_params['rep_head'] = rep_head

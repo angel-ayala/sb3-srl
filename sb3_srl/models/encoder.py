@@ -19,7 +19,7 @@ from .base import FunctionArguments
 @dataclass
 class EncoderArguments(FunctionArguments):
     state_shape: tuple
-    
+
     @property
     def feature_dim(self) -> int | tuple[int, ...]:
         return self.output_dim
@@ -84,7 +84,7 @@ class SimpleSPREncoder(VectorEncoder):
             state_shape=state_shape,
             input_dim=state_shape[-1],
             feature_dim=feature_dim)
-    
+
     def _instance_model(self, args: EncoderArguments):
         head = [
             nn.Linear(args.feature_dim, args.hidden_dim),
@@ -188,7 +188,7 @@ class AdPuEncoder(VectorEncoder):
         # split observation into proprioceptive and exteroceptive
         input_shape = (proprio_input, extero_input)
         output_shape = (feature_dim, feature_dim)
-        
+
         # super(AdPuEncoder, self).__init__(
         BaseEncoder.__init__(self,
             state_shape=state_shape,
@@ -196,7 +196,7 @@ class AdPuEncoder(VectorEncoder):
             feature_dim=output_shape,
             layers_dim=layers_dim,
             auto_setup=True)
-    
+
     def instance_models(self):
         assert self.multi_input and self.multi_output
         # Proprioceptive observation
@@ -206,7 +206,7 @@ class AdPuEncoder(VectorEncoder):
         extero = self._instance_model(
             self._function_args(self.input_dim[1], self.feature_dim[1]))
         return nn.ModuleList([proprio, extero]), 2
-    
+
     @property
     def proprio(self) -> nn.Module:
         return self.models[0]

@@ -6,6 +6,7 @@ Created on Tue Aug 25 00:00:34 2026
 @author: angel
 """
 from typing import Optional
+from dataclasses import dataclass
 from enum import Enum
 import math
 import torch as th
@@ -15,7 +16,9 @@ import torch.nn.functional as F
 
 from ..models import BaseFunction
 from ..models import BaseDecoder
+from ..models.base import FunctionArguments
 from .representation import RepresentationLayer
+from .representation import RepresentationArguments
 
 class ScaleParameterization(str, Enum):
     STD = "std"
@@ -232,77 +235,58 @@ STCH_HEADS = {
 }
 
 
-class StochasticRepresentation(RepresentationLayer):
+class StochasticHead:
 
     @staticmethod
-    def instance_dist_head(model_name, params):
+    def create(model_name, z_dim, **params):
         if model_name is None:
             print("No head defined, using NormalizedUnboundedDistribution")
-            return NormalizedUnboundedDistribution(**params)
+            return NormalizedUnboundedDistribution(z_dim=z_dim, **params)
 
         try:
-            dist_head = STCH_HEADS[model_name]
+            head = STCH_HEADS[model_name]
         except KeyError:
             raise ValueError(
                 f"Representation function '{model_name}' not registered. "
                 f"Available: {list(STCH_HEADS)}"
             )
-        return dist_head(**params)
 
-    def _instance_model(self, z_dim):
-        return self.instance_dist_head(self.rep_head, {'z_dim': z_dim})
-
-    def forward(self, obs_feats):
-        if isinstance(obs_feats, tuple):
-            if self.n_models > 1:
-                mean, log_var = [], []
-                for i, m in enumerate(self.models):
-                    _mean, _log_var = m(obs_feats[i])
-                    mean.append(_mean)
-                    log_var.append(_log_var)
-                mean = th.concat(mean, dim=1)
-                log_var = th.concat(log_var, dim=1)
-
-            else:
-                mean, log_var = self.models[-1](th.cat(obs_feats, dim=1))
-
-        else:
-            mean, log_var = self.models[-1](obs_feats)
-
-        distribution = self.models[-1].forward_dist(mean, log_var)
-        return distribution  # return distribution object by default
+        return head(z_dim=z_dim, **params)
 
 
-class StochasticWrapper(nn.Module):
-    def __init__(self, model: BaseFunction, rep_head: str = None, pre_act: nn.Module = nn.LeakyReLU):
-        super().__init__()
-        self.model = model
-        self.replaced_head = False
-        prob_model = StochasticRepresentation.instance_dist_head(
-            rep_head, {'z_dim': model.output_dim, 'pre_act': pre_act})
-        if isinstance(model, BaseDecoder):
-            del self.model.projection
-            self.model.projection = prob_model
-            self.replaced_head = True
-        else:
-            self.prob_model = prob_model
+@dataclass
+class StochasticArguments(FunctionArguments):
+    dist_head: str | None = None
+    pre_act: nn.Module = nn.LeakyReLU
 
-    def forward(self, *args, **kwargs) -> D:
-        if self.model is None:
-            raise NotImplementedError("No deterministic backbone was defined")
 
-        params = self.model(*args, **kwargs)
-        if self.replaced_head:
-            return self.model.projection.forward_dist(*params)
+class StochasticWrapper(BaseFunction):
+    def __init__(self, model, dist_head=None, pre_act=nn.LeakyReLU):
+        self.dist_head = dist_head
+        self.pre_act = pre_act
+        super().__init__(model.input_dim, model.output_dim, True)
+        self.function = model
 
-        params = self.prob_model(params)
-        return self.prob_model.forward_dist(*params)  # return distribution object by default
-
-    def __repr__(self) -> str:
-        head_model = self.model.projection if self.replaced_head else self.prob_model
-        return (
-            f"{self.__class__.__name__}("
-            f"model={self.model.__class__.__name__},"
-            f"head={head_model.__class__.__name__})\n"
-            f"{super().__repr__()}"
+    def _instance_model(self, args):
+        return StochasticHead.create(
+            args.dist_head, args.output_dim, pre_act=args.pre_act
         )
+
+    def _function_args(self, input_dim, output_dim):
+        return StochasticArguments(
+            input_dim, output_dim, [], self.dist_head, self.pre_act
+        )
+
+    def forward(self, *args, **kwargs):
+        z = self.function(*args, **kwargs)
+        zs = th.split(z, self.output_dim, 1) if self.multi_output else (z,)
+        params = [h(z) for h, z in zip(self.models, zs)]
+        mean = th.cat([p[0] for p in params], 1)
+        log_var = th.cat([p[1] for p in params], 1)
+        return self.models[0].forward_dist(mean, log_var)
+
+    def __getattr__(self, name):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.function, name)

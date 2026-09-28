@@ -21,7 +21,7 @@ from .base import FunctionArguments
 @dataclass
 class DecoderArguments(FunctionArguments):
     action_shape: Optional[tuple | int]
-    
+
     @property
     def latent_dim(self) -> int | tuple[int, ...]:
         return self.input_dim
@@ -38,7 +38,7 @@ class BaseDecoder(BaseFunction):
         self.action_shape = action_shape
 
         super(BaseDecoder, self).__init__(latent_dim, output_dim, auto_setup)
-    
+
     def _function_args(self, input_dim, output_dim):
         return DecoderArguments(
             input_dim=input_dim,
@@ -48,20 +48,17 @@ class BaseDecoder(BaseFunction):
         )
 
     def _model_args(self, i, z, action=None):
-        print('_model_args', z.shape)
         if isinstance(z, tuple):
             if self.n_models > 1:
                 z = z[i]
             else:
                 z = th.cat(z, dim=1)
-            print('_model_args istuple', z.shape)
+
         elif self.multi_input:
             z = z.chunk(len(self.input_dim), dim=1)[i]
-            print('_model_args multi_input', z.shape)
 
         if action is not None:
             z = th.cat((z, action), dim=1)
-            print('_model_args action', z.shape)
 
         return z
 
@@ -106,12 +103,12 @@ class SPRDecoder(BaseDecoder):
             action_shape=action_shape,
             layers_dim=layers_dim
         )
+        self.projection = nn.Linear(latent_dim, latent_dim)
 
     def _instance_model(self, args: DecoderArguments):
         layers = create_mlp(args.latent_dim + args.action_shape[-1],
                             args.latent_dim, args.layers_dim,
                             nn.LeakyReLU, True, True)
-        self.projection = nn.Linear(args.latent_dim, args.latent_dim)
         return nn.Sequential(*layers)
 
     def transition(self, z, action):
@@ -128,7 +125,7 @@ class SPRDecoder(BaseDecoder):
 
 class SimpleSPRDecoder(BaseDecoder):
     """SimpleSPRDecoder as representation learning function."""
-    
+
     def __init__(self,
                  state_shape: tuple | int,
                  latent_dim: tuple | int,
@@ -142,8 +139,10 @@ class SimpleSPRDecoder(BaseDecoder):
             action_shape=action_shape,
             layers_dim=layers_dim
         )
-        proj_dim = sum(latent_dim) if self.multi_input else latent_dim
-        self.projection = self._instance_projection(proj_dim, proj_dim, layers_dim)
+        if auto_setup:
+            proj_dim = sum(latent_dim) if self.multi_input else latent_dim
+            self.projection = self._instance_projection(
+                proj_dim, proj_dim, layers_dim)
 
     def _instance_model(self, args: DecoderArguments):
         code_layers = create_mlp(args.latent_dim + args.action_shape[-1],
@@ -166,7 +165,7 @@ class SimpleSPRDecoder(BaseDecoder):
             return hot_action.to(device=action.device)
 
         return action
-    
+
     def forward_transition(self, z, action):
         return super().forward(z, self.preprocess_action(action))
 
@@ -210,18 +209,3 @@ class PixelDecoder(BaseDecoder):
         obs = self.deconvs[-1](deconv)
 
         return obs
-
-
-class DualTransition(nn.Module):
-    def __init__(self, proprio, extero):
-        super().__init__()
-        self.proprio = proprio
-        self.extero = extero
-
-    def forward(self, z, action):
-        proprio_z, extero_z = z.chunk(2, dim=1)
-
-        proprio_z = self.proprio(th.cat([proprio_z, action], dim=1))
-        extero_z = self.extero(th.cat([extero_z, action], dim=1))
-
-        return th.cat([proprio_z, extero_z], dim=1)

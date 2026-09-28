@@ -44,7 +44,7 @@ class BaseFunction(nn.Module):
     @property
     def multi_output(self):
         return isinstance(self.output_dim, tuple)
-    
+
     def instance_models(self):
         models = []
 

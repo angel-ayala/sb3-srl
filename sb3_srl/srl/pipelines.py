@@ -24,7 +24,7 @@ class TransformationBranch(nn.Module):
     def __init__(self, stages: Iterable[BaseFunction]):
         super().__init__()
         self.stages = nn.ModuleList(stages)
-    
+
     def output_dim(self) -> int | tuple[int, ...]:
         return self.stages[-1].output_dim
 
@@ -33,7 +33,6 @@ class TransformationBranch(nn.Module):
 
     def forward(self, x):
         for stage in self.stages:
-            print('stage', stage.__class__.__name__)
             x = stage(x)
         return x
 
@@ -78,7 +77,7 @@ class StatePipeline(nn.Module):
     @property
     def branch_keys(self):
         return list(self.branches.keys())
-    
+
     @property
     def rep_layer(self):
         if self.id_rep_layer != -1:

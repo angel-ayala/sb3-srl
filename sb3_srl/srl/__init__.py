@@ -24,7 +24,7 @@ from ..models import create_fusion_model
 from .representation import RepresentationModel, RepresentationLayer
 from .losses import create_loss
 from .pipelines import StatePipeline, TransformationBranch
-from .stochastic import StochasticRepresentation, StochasticWrapper
+from .stochastic import StochasticWrapper
 
 
 class StatePipelineFactory:
@@ -36,21 +36,26 @@ class StatePipelineFactory:
         model_name = name.lower().split(":")
         model_type = model_name[0]
         model_name = model_name[1]
+        _params = params.copy()
         # if model_type == "a":
         #     return create_attn_model(model_name, params)
 
         if model_type == "r":
-            params['feature_dim'] = input_dim
-            if model_name == 'stch':
-                rep = StochasticRepresentation(**params)
-            if model_name == 'det':
-                rep = RepresentationLayer(**params)
+            _params['feature_dim'] = input_dim
+            is_stochastic = model_name == 'stch'
+            rep_head = _params['rep_head']
+            if is_stochastic:
+                 _params['rep_head'] = None
+            # deterministic default
+            rep = RepresentationLayer(**_params)
+            if is_stochastic:
+                return StochasticWrapper(rep, rep_head)
             return rep
 
         if model_type == "f":
-            params['latent_dim'] = input_dim
+            _params['latent_dim'] = input_dim
             raise NotImplementedError
-            # return create_fusion_model(model_name, params)
+            # return create_fusion_model(model_name, _params)
 
         raise NotImplementedError(f"Model type {name} not found!")
 
@@ -137,7 +142,6 @@ class RepresentationFactory:
         if decoder_config is not None:
             # fusion layer present in pipeline
             decoder_config[1]["latent_dim"] = pipeline.latent_dim
-            print('config', decoder_config[1])
             decoder = cls.create_decoder(decoder_config)
 
             if model_config["is_stochastic"]:
@@ -225,7 +229,6 @@ class SRLPolicy:
         """
         z = self.rep_model.forward_z(
             observation, deterministic=deterministic, use_grad=False)
-        print('srl_forward', z.shape)
         return z
 
     def _predict_srl(
