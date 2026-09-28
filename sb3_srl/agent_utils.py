@@ -173,7 +173,6 @@ def args2encoder(args, env_params):
     params = {
         'state_shape': env_params['state_shape'],
         'feature_dim': _args.get('feature_dim', 32),
-        'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
 
@@ -212,7 +211,8 @@ def args2decoder(args, env_params):
         _args = vars(_args)
     params = {
         'state_shape': env_params['state_shape'],
-        'latent_dim': _args.get('latent_dim', 32),
+        'action_shape': env_params['action_shape'],
+        'latent_dim': _args.get('latent_dim', 32),        
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
 
@@ -221,24 +221,17 @@ def args2decoder(args, env_params):
     decoder = 'Vector'
 
     if _args.get('model_proprio', False):
-        decoder = 'ProprioceptiveSPR'
-        params['action_shape'] = env_params['action_shape']
-        params['with_fusion'] = False
-        del params['state_shape']
+        decoder = 'SimpleSPR'
 
     elif _args.get('model_spr', False):
         decoder = 'SPR'
         if _args.get('is_pixels', False):
             params['layers_dim'] = [params['layers_dim'][-1]] * (len(params['layers_dim']) - 1)
-        params['action_shape'] = env_params['action_shape']
-        del params['state_shape']
 
     elif _args.get('model_ispr', False):
         decoder = 'SimpleSPR'
         if _args.get('is_pixels', False):
             params['layers_dim'] = [params['layers_dim'][-1]] * (len(params['layers_dim']) - 1)
-        params['action_shape'] = env_params['action_shape']
-        del params['state_shape']
 
     elif _args.get('is_pixels', False):
         decoder = 'Pixel'
@@ -254,7 +247,10 @@ def args2pipeline(args, env_params):
         _args = vars(_args)
 
     rep_function = "R:"
-    rep_params = {'latent_dim': _args.get('latent_dim', 32)}
+    rep_params = {
+        'latent_dim': _args.get('latent_dim', 32),
+        'feature_dim': _args.get('feature_dim', 32),
+    }
     update_dimensions(_args.get('feat_lat_propr'), rep_params, env_params['state_shape'][-1])
 
     if not _args.get('use_stochastic', False):

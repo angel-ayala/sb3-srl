@@ -24,14 +24,16 @@ class TransformationBranch(nn.Module):
     def __init__(self, stages: Iterable[BaseFunction]):
         super().__init__()
         self.stages = nn.ModuleList(stages)
-        self.output_dim = stages[-1].output_dim
+    
+    def output_dim(self) -> int | tuple[int, ...]:
+        return self.stages[-1].output_dim
 
     def add_function(self, stage: BaseFunction):
         self.stages.append(stage)
-        self.output_dim = stage.output_dim
 
     def forward(self, x):
         for stage in self.stages:
+            print('stage', stage.__class__.__name__)
             x = stage(x)
         return x
 
@@ -58,6 +60,7 @@ class StatePipeline(nn.Module):
         self.is_stochastic = False
         self.id_rep_layer = -1
         self.rep_head_name = None
+        self.with_fusion = False
 
         for i, (model, params) in enumerate(configuration[list(configuration.keys())[0]]):
             model_name = model.lower()
@@ -65,6 +68,8 @@ class StatePipeline(nn.Module):
                 self.id_rep_layer = i
                 self.is_stochastic = "stch" in model_name
                 self.rep_head_name = params['rep_head']
+            if "f:" in model_name:
+                self.with_fusion = True
 
     @property
     def n_branches(self):
@@ -82,7 +87,7 @@ class StatePipeline(nn.Module):
 
     @property
     def latent_dim(self):
-        return self.branches["representation"].output_dim
+        return self.rep_layer.latent_dim
 
     def scale_probability(self, dist, entropy_beta=0.05):
         entropy_norm = None

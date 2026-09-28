@@ -19,7 +19,6 @@ from .decoder import (
     BaseDecoder,
     VectorDecoder,
     PixelDecoder,
-    ProprioceptiveSPRDecoder,
     SPRDecoder,
     SimpleSPRDecoder
 )
@@ -43,7 +42,6 @@ ENCODERS = {
 DECODERS = {
     "Vector": VectorDecoder,
     "Pixel": PixelDecoder,
-    "ProprioceptiveSPR": ProprioceptiveSPRDecoder,
     "SPR": SPRDecoder,
     "SimpleSPR": SimpleSPRDecoder,
 }

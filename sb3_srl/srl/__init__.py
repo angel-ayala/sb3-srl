@@ -30,21 +30,27 @@ from .stochastic import StochasticRepresentation, StochasticWrapper
 class StatePipelineFactory:
 
     @staticmethod
-    def create_model(name: str, params: dict) -> BaseFunction:
+    def create_model(name: str, params: dict,
+                     input_dim: int | tuple[int, ...]) -> BaseFunction:
         assert ":" in name, f"Bad function model format: {name}"
         model_name = name.lower().split(":")
         model_type = model_name[0]
         model_name = model_name[1]
         # if model_type == "a":
         #     return create_attn_model(model_name, params)
+
         if model_type == "r":
+            params['feature_dim'] = input_dim
             if model_name == 'stch':
                 rep = StochasticRepresentation(**params)
             if model_name == 'det':
                 rep = RepresentationLayer(**params)
             return rep
+
         if model_type == "f":
-            return create_fusion_model(model_name, params)
+            params['latent_dim'] = input_dim
+            raise NotImplementedError
+            # return create_fusion_model(model_name, params)
 
         raise NotImplementedError(f"Model type {name} not found!")
 
@@ -63,9 +69,12 @@ class StatePipelineFactory:
         ]
         """
         stages = []
+        in_dim = input_dim
 
         for model_name, model_params in models:
-            stage = StatePipelineFactory.create_model(model_name, model_params)
+            stage = StatePipelineFactory.create_model(
+                model_name, model_params, in_dim)
+            in_dim = stage.output_dim
             stages.append(stage)
 
         return TransformationBranch(stages)
@@ -121,16 +130,14 @@ class RepresentationFactory:
         loss = cls.create_loss(model_config["loss"])
         pipeline = StatePipelineFactory.create(
             model_config["pipeline"],
-            encoder.latent_dim
+            encoder.feature_dim
         )
 
         decoder_config = model_config.get("decoder")
         if decoder_config is not None:
             # fusion layer present in pipeline
-            if pipeline.latent_dim != encoder.latent_dim:
-                print(f"Warning! pipeline.latent_dim ({pipeline.latent_dim}) != encoder.latent_dim ({encoder.latent_dim})")
-                decoder_config[1]["with_fusion"] = True
-                decoder_config[1]["latent_dim"] = pipeline.latent_dim
+            decoder_config[1]["latent_dim"] = pipeline.latent_dim
+            print('config', decoder_config[1])
             decoder = cls.create_decoder(decoder_config)
 
             if model_config["is_stochastic"]:
@@ -149,7 +156,6 @@ class RepresentationFactory:
         model.create_target()
         print(model)
 
-        # objective/pipeline selection will be added here
         return model
 
 
@@ -217,11 +223,10 @@ class SRLPolicy:
         """
         Representation inference used by the SB3 policy.
         """
-        return self.rep_model.forward_z(
-            observation,
-            deterministic=deterministic,
-            use_grad=False,
-        )
+        z = self.rep_model.forward_z(
+            observation, deterministic=deterministic, use_grad=False)
+        print('srl_forward', z.shape)
+        return z
 
     def _predict_srl(
         self,
