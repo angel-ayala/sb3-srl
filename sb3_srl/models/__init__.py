@@ -29,8 +29,10 @@ from .fusion import (
     FusionFiLM,
     CrossAttention
 )
-from .mamba3 import MambaWrapper
-
+from .wrappers import (
+    StochasticWrapper,
+    MambaWrapper
+)
 
 ENCODERS = {
     "Vector": VectorEncoder,
@@ -54,6 +56,11 @@ FUSION = {
     "gated": FusionGated,
     "film": FusionFiLM,
     "att": CrossAttention,
+}
+
+WRAPPERS = {
+    "Stochastic": StochasticWrapper,
+    "Mamba": MambaWrapper,
 }
 
 
@@ -90,3 +97,13 @@ def create_fusion_model(model_name: str, params: dict) -> BaseFunction:
             f"Available: {list(FUSION)}"
         )
     return fusion_class(**params)
+
+def create_wrapper(model_name: str, params: dict) -> BaseFunction:
+    try:
+        wrapper_class = WRAPPERS[model_name]
+    except KeyError:
+        raise ValueError(
+            f"Wrapper '{model_name}' not registered. "
+            f"Available: {list(WRAPPERS)}"
+        )
+    return wrapper_class(**params)

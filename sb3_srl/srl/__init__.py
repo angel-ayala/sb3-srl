@@ -21,11 +21,10 @@ from ..models import BaseFunction
 from ..models import create_encoder
 from ..models import create_decoder
 from ..models import create_fusion_model
-from ..models import MambaWrapper
-from .representation import RepresentationModel, RepresentationLayer
+from ..models import create_wrapper
 from .losses import create_loss
 from .pipelines import StatePipeline, TransformationBranch
-from .stochastic import StochasticWrapper
+from .representation import RepresentationModel, RepresentationLayer
 
 
 class StatePipelineFactory:
@@ -50,7 +49,8 @@ class StatePipelineFactory:
             # deterministic default
             rep = RepresentationLayer(**_params)
             if is_stochastic:
-                return StochasticWrapper(rep, rep_head)
+                return create_wrapper(
+                    "Stochastic", {'model': rep, 'dist_head': rep_head})
             return rep
 
         if model_type == "f":
@@ -131,7 +131,7 @@ class RepresentationFactory:
 
         decoder = create_decoder(name, _params)
         if use_mamba:
-            return MambaWrapper(decoder)
+            return create_wrapper("Mamba", {'model': decoder})
 
         return decoder
 
@@ -159,7 +159,14 @@ class RepresentationFactory:
             decoder = cls.create_decoder(decoder_config)
 
             if model_config["is_stochastic"]:
-                decoder = StochasticWrapper(decoder, pipeline.rep_head_name, None)
+                decoder = create_wrapper(
+                    "Stochastic",
+                    {
+                        'model': decoder,
+                        'dist_head': pipeline.rep_head_name,
+                        'pre_act': None
+                    }
+                )
 
         model = RepresentationModel(
             model_type=srl_config["model"],

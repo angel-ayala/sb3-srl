@@ -884,68 +884,6 @@ def count_parameters(model: nn.Module):
     return trainable, total
 
 
-# added for architecture compatibility
-from .base import BaseFunction
-from .base import FunctionArguments
-
-class MambaFunction(BaseFunction):
-
-    def __init__(self, d_model, **config):
-        super().__init__()
-
-        self.mamba = MambaBlock(
-            d_model=d_model,
-            ssm_cfg=config,
-        )
-
-    def forward(self, x):
-        return self.mamba(x)
-
-class MambaWrapper(BaseFunction):
-    def __init__(self, model):
-        super().__init__(model.input_dim, model.output_dim, True)
-        self.model = model
-
-    def _function_args(self, input_dim, output_dim):
-        return FunctionArguments(input_dim, output_dim, [])
-
-    def _instance_model(self, args: FunctionArguments):
-        dim = sum(self.input_dim) if self.multi_input else args.output_dim
-        state_dim = max(1, dim // 4)
-        head_dim = max(1, dim // 8)        
-        return MambaBlock(
-            dim,
-            ssm_cfg={
-                'd_state': state_dim,
-                'expand': 2,
-                'headdim': head_dim,
-                'ngroups': 1,
-                'rope_fraction': 0.5,
-                'dt_min': 0.001,
-                'dt_max': 0.1,
-                'dt_init_floor': 1e-4,
-                'A_floor': 1e-4,
-                'is_mimo': True,
-                'mimo_rank': 4
-            }
-        )
-
-    def forward(self, *args, **kwargs):
-        z = self.model(*args, **kwargs)
-        sequence = torch.stack((args[0], z), dim=1)
-        return super().forward(sequence)[:, -1]
-
-    def __getattr__(self, name):
-        try:
-            return super().__getattr__(name)
-        except AttributeError:
-            has_attr = hasattr(self.model, name)
-            if not has_attr:
-                raise AttributeError(
-                    f"'{type(self).__name__}' object has no attribute '{name}'"
-                )
-            return getattr(self.model, name)
-
 # ---------------------------------------------------------------------------
 # Quick sanity-check (run as a script)
 # ---------------------------------------------------------------------------

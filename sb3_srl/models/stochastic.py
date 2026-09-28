@@ -6,7 +6,6 @@ Created on Tue Aug 25 00:00:34 2026
 @author: angel
 """
 from typing import Optional
-from dataclasses import dataclass
 from enum import Enum
 import math
 import torch as th
@@ -14,8 +13,7 @@ from torch import nn
 import torch.distributions as D
 import torch.nn.functional as F
 
-from ..models import BaseFunction
-from ..models.base import FunctionArguments
+from .base import BaseFunction
 
 class ScaleParameterization(str, Enum):
     STD = "std"
@@ -246,46 +244,3 @@ class StochasticHead:
             )
 
         return head(z_dim=z_dim, **params)
-
-
-@dataclass
-class StochasticArguments(FunctionArguments):
-    dist_head: str | None = None
-    pre_act: nn.Module = nn.LeakyReLU
-
-
-class StochasticWrapper(BaseFunction):
-    def __init__(self, model, dist_head=None, pre_act=nn.LeakyReLU):
-        self.dist_head = dist_head
-        self.pre_act = pre_act
-        super().__init__(model.input_dim, model.output_dim, True)
-        self.function = model
-
-    def _instance_model(self, args):
-        return StochasticHead.create(
-            args.dist_head, args.output_dim, pre_act=args.pre_act
-        )
-
-    def _function_args(self, input_dim, output_dim):
-        return StochasticArguments(
-            input_dim, output_dim, [], self.dist_head, self.pre_act
-        )
-
-    def forward(self, *args, **kwargs):
-        z = self.function(*args, **kwargs)
-        zs = th.split(z, self.output_dim, 1) if self.multi_output else (z,)
-        params = [h(z) for h, z in zip(self.models, zs)]
-        mean = th.cat([p[0] for p in params], 1)
-        log_var = th.cat([p[1] for p in params], 1)
-        return self.models[0].forward_dist(mean, log_var)
-
-    def __getattr__(self, name):
-        try:
-            return super().__getattr__(name)
-        except AttributeError:
-            has_attr = hasattr(self.function, name)
-            if not has_attr:
-                raise AttributeError(
-                    f"'{type(self).__name__}' object has no attribute '{name}'"
-                )
-            return getattr(self.function, name)
