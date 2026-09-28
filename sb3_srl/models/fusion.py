@@ -14,13 +14,14 @@ from .base import BaseFunction
 
 class BaseFusion(BaseFunction):
     def __init__(self, latent_dim):
-        super(BaseFusion, self).__init__((latent_dim, latent_dim), latent_dim, True)
-        if isinstance(self.input_dim, tuple):
+        assert isinstance(latent_dim, tuple)
+        super(BaseFusion, self).__init__(latent_dim, latent_dim[-1], True)
+        if self.multi_input:
             self.input_dim = sum(self.input_dim)
     
     def instance_models(self):
         models = []
-        if self.multiple_input:
+        if self.multi_input:
             for z_dim in self.input_dim:
                 models.append(self._instance_model(z_dim))
         else:

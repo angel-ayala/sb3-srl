@@ -15,10 +15,7 @@ import torch.distributions as D
 import torch.nn.functional as F
 
 from ..models import BaseFunction
-from ..models import BaseDecoder
 from ..models.base import FunctionArguments
-from .representation import RepresentationLayer
-from .representation import RepresentationArguments
 
 class ScaleParameterization(str, Enum):
     STD = "std"

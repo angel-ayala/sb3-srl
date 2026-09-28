@@ -54,8 +54,7 @@ class StatePipelineFactory:
 
         if model_type == "f":
             _params['latent_dim'] = input_dim
-            raise NotImplementedError
-            # return create_fusion_model(model_name, _params)
+            return create_fusion_model(model_name, _params)
 
         raise NotImplementedError(f"Model type {name} not found!")
 
