@@ -456,7 +456,7 @@ def args2logpath(args, algo, env_name=None):
             entropy_suffix = f"eb{args.entropy_beta:.0e}".replace('-', '')
             path_suffix += f"-{entropy_suffix}"
 
-    else:
+    elif args.is_srl:
         path_suffix += '-rdet'
 
     fusion_suffix = ''

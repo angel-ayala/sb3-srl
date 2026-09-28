@@ -106,9 +106,6 @@ class NormalDistributionHead(BaseFunction):
         return center + scale * th.tanh((log_var - center) / scale)
 
     def _bound_log_var_softplus(self, log_var):
-        log_var_min = None
-        log_var_max = None
-
         # soft upper bound
         if self.std_max is not None:
             log_var_max = math.log(self.std_max ** 2)
