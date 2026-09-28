@@ -131,6 +131,10 @@ def parse_srl_args(parser):
                          help='Scalar factor for entropy scale of next-state distribution.')
     arg_srl.add_argument("--feat-lat-prop", type=str, default=None,
                          help='Proportion for the feature and latent dimension size relative to observation.')
+
+    arg_srl.add_argument("--use-mamba-dec", action='store_true',
+                         help='Use Mamba model on the decoder function, after transition.')
+    
     return arg_srl
 
 
@@ -214,6 +218,7 @@ def args2decoder(args, env_params):
         'action_shape': env_params['action_shape'],
         'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
+        'use_mamba': _args.get('use_mamba_dec', False)
     }
 
     update_dimensions(_args.get('feat_lat_propr'), params, env_params['state_shape'][-1])

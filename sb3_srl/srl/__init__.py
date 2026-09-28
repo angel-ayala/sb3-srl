@@ -21,6 +21,7 @@ from ..models import BaseFunction
 from ..models import create_encoder
 from ..models import create_decoder
 from ..models import create_fusion_model
+from ..models import MambaWrapper
 from .representation import RepresentationModel, RepresentationLayer
 from .losses import create_loss
 from .pipelines import StatePipeline, TransformationBranch
@@ -113,12 +114,26 @@ class RepresentationFactory:
     @staticmethod
     def create_encoder(config):
         name, params = config
-        return create_encoder(name, params)
+        _params = params.copy()
+        if 'use_mamba' in _params.keys():
+            del _params['use_mamba']
+
+        return create_encoder(name, _params)
 
     @staticmethod
     def create_decoder(config):
         name, params = config
-        return create_decoder(name, params)
+        _params = params.copy()
+        use_mamba = False
+        if 'use_mamba' in _params.keys():
+            use_mamba = _params['use_mamba']
+            del _params['use_mamba']
+
+        decoder = create_decoder(name, _params)
+        if use_mamba:
+            return MambaWrapper(decoder)
+
+        return decoder
 
     @staticmethod
     def create_loss(config):

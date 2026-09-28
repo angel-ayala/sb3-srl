@@ -286,4 +286,9 @@ class StochasticWrapper(BaseFunction):
         try:
             return super().__getattr__(name)
         except AttributeError:
+            has_attr = hasattr(self.function, name)
+            if not has_attr:
+                raise AttributeError(
+                    f"'{type(self).__name__}' object has no attribute '{name}'"
+                )
             return getattr(self.function, name)

@@ -29,6 +29,7 @@ from .fusion import (
     FusionFiLM,
     CrossAttention
 )
+from .mamba3 import MambaWrapper
 
 
 ENCODERS = {
