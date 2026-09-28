@@ -19,7 +19,6 @@ from .decoder import (
     BaseDecoder,
     VectorDecoder,
     PixelDecoder,
-    ProprioceptiveSPRDecoder,
     SPRDecoder,
     SimpleSPRDecoder
 )
@@ -30,6 +29,7 @@ from .fusion import (
     FusionFiLM,
     CrossAttention
 )
+from .mamba3 import MambaWrapper
 
 
 ENCODERS = {
@@ -43,7 +43,6 @@ ENCODERS = {
 DECODERS = {
     "Vector": VectorDecoder,
     "Pixel": PixelDecoder,
-    "ProprioceptiveSPR": ProprioceptiveSPRDecoder,
     "SPR": SPRDecoder,
     "SimpleSPR": SimpleSPRDecoder,
 }

@@ -10,11 +10,13 @@ from __future__ import annotations
 from typing import Any, Iterable, Optional
 
 import copy
+from dataclasses import dataclass
 import torch as th
 from torch import nn
 from stable_baselines3.common.utils import polyak_update
 
 from ..models.base import BaseFunction
+from ..models.base import FunctionArguments
 from ..models import BaseEncoder
 from ..models import BaseDecoder
 from ..models.tools import GradientBalancer
@@ -437,20 +439,73 @@ class RepresentationModel:
         return out_str
 
 
+@dataclass
+class RepresentationArguments(FunctionArguments):
+    rep_head: str | None
+
+    @property
+    def feature_dim(self) -> int | tuple[int, ...]:
+        return self.input_dim
+
+    @property
+    def latent_dim(self) -> int | tuple[int, ...]:
+        return self.output_dim
+
+
 class RepresentationLayer(BaseFunction):
 
-    def __init__(self, latent_dim: int | tuple[int, ...], rep_head=None):
+    def __init__(self,
+                 feature_dim: int | tuple[int, ...],
+                 latent_dim: int | tuple[int, ...],
+                 rep_head=None):
         self.rep_head = rep_head
-        super().__init__(input_dim=latent_dim,
-                         output_dim=latent_dim,
-                         auto_setup=True)
 
-    def _instance_model(self, z_dim):
-        if self.rep_head is None:
-            print("No head defined, using nn.Identity")
-            return nn.Identity()
+        # if multiple inputs, force multiple outputs
+        if isinstance(feature_dim, tuple):
+            n = len(feature_dim)
+            if not isinstance(latent_dim, tuple):
+                latent_dim = (latent_dim, ) * n
+            elif n != len(latent_dim):
+                raise ValueError(f"lenght latent_dim ({len(latent_dim)}) != "
+                                 f"feature_dim ({n})")
 
-        if self.rep_head == "NormTanh":
-            return nn.Sequential(nn.LayerNorm(z_dim), nn.Tanh())
+        super().__init__(
+            input_dim=feature_dim,
+            output_dim=latent_dim,
+            auto_setup=True,
+        )
 
-        return NotImplementedError("Representation function {self.rep_head} not found!")
+    @property
+    def latent_dim(self) -> int | tuple[int, ...]:
+        return self.output_dim
+
+    def _function_args(self, input_dim, output_dim):
+        return RepresentationArguments(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            layers_dim=[],
+            rep_head=self.rep_head
+        )
+
+    def _instance_model(self, args: RepresentationArguments):
+        head = [
+            nn.LeakyReLU(),
+            nn.Linear(args.feature_dim, args.latent_dim, bias=True),
+        ]
+
+        if args.rep_head is None:
+            # linear
+            return nn.Sequential(*head)
+
+        elif args.rep_head == "Tanh":
+            return nn.Sequential(*head,
+                                 nn.Tanh())
+
+        elif args.rep_head == "NormTanh":
+            return nn.Sequential(*head,
+                                 nn.LayerNorm(args.input_dim),
+                                 nn.Tanh())
+
+        raise NotImplementedError(
+            f"Representation function {args.rep_head} not found!"
+        )

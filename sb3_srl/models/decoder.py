@@ -7,6 +7,7 @@ Created on Mon Aug 24 22:33:13 2026
 """
 from typing import List, Optional
 
+from dataclasses import dataclass
 from stable_baselines3.common.torch_layers import create_mlp
 import torch as th
 from torch import nn
@@ -14,34 +15,80 @@ import torch.nn.functional as F
 
 from .base import BaseFunction
 from .encoder import PixelEncoder
+from .base import FunctionArguments
+
+
+@dataclass
+class DecoderArguments(FunctionArguments):
+    action_shape: Optional[tuple | int]
+
+    @property
+    def latent_dim(self) -> int | tuple[int, ...]:
+        return self.input_dim
 
 
 class BaseDecoder(BaseFunction):
-    def __init__(self, input_dim: int, output_dim: int):
-        super(BaseDecoder, self).__init__(input_dim, output_dim, False)
+    def __init__(self,
+                 latent_dim: tuple | int,
+                 output_dim: tuple | int,
+                 action_shape: Optional[tuple | int] = None,
+                 layers_dim: List[int] = [256, 256],
+                 auto_setup: bool = True):
+        self.layers_dim = layers_dim
+        self.action_shape = action_shape
 
-    def forward(self, *args, **kwargs):
-        raise NotImplementedError
+        super(BaseDecoder, self).__init__(latent_dim, output_dim, auto_setup)
+
+    def _function_args(self, input_dim, output_dim):
+        return DecoderArguments(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            layers_dim=self.layers_dim,
+            action_shape=self.action_shape,
+        )
+
+    def _model_args(self, i, z, action=None):
+        if isinstance(z, tuple):
+            if self.n_models > 1:
+                z = z[i]
+            else:
+                z = th.cat(z, dim=1)
+
+        elif self.multi_input:
+            z = z.chunk(len(self.input_dim), dim=1)[i]
+
+        if action is not None:
+            z = th.cat((z, action), dim=1)
+
+        return z
 
 
 class VectorDecoder(BaseDecoder):
     def __init__(self,
-                 state_shape: tuple,
-                 latent_dim: int,
-                 layers_dim: List[int] = [256, 256]):
-        super(VectorDecoder, self).__init__(latent_dim, state_shape[-1])
-        layers = create_mlp(latent_dim, state_shape[-1], layers_dim,
-                            nn.LeakyReLU, False, True)
-        layers.insert(0, nn.Linear(latent_dim, latent_dim))
+                 state_shape: tuple | int,
+                 latent_dim: tuple | int,
+                 action_shape: Optional[tuple | int] = None,
+                 layers_dim: List[int] = [256],
+                 auto_setup: bool = True):
+        out_dim = state_shape[-1] if isinstance(state_shape, tuple) else state_shape
+        super(VectorDecoder, self).__init__(
+            latent_dim=latent_dim,
+            output_dim=out_dim,
+            action_shape=action_shape,
+            layers_dim=layers_dim
+        )
 
-        if len(state_shape) == 2:
-            layers.insert(-1, nn.ConvTranspose1d(layers_dim[0], state_shape[0],
-                                                 kernel_size=state_shape[-1]))
-            layers.insert(-1, nn.Unflatten(2, (1, layers_dim[-1])))
-        self.projection = nn.Sequential(*layers)
+    def _instance_model(self, args: DecoderArguments):
+        layers = create_mlp(args.latent_dim, args.output_dim,
+                            args.layers_dim, nn.LeakyReLU, False, True)
+        layers.insert(0, nn.Linear(args.latent_dim, args.latent_dim))
 
-    def forward(self, z):
-        return self.projection(z)
+        if isinstance(args.output_dim, tuple) and len(args.output_dim) == 2:
+            layers.insert(-1, nn.ConvTranspose1d(
+                args.layers_dim[0], args.output_dim[0],
+                kernel_size=args.output_dim[-1]))
+            layers.insert(-1, nn.Unflatten(2, (1, args.layers_dim[-1])))
+        return nn.Sequential(*layers)
 
 
 class SPRDecoder(BaseDecoder):
@@ -50,14 +97,22 @@ class SPRDecoder(BaseDecoder):
                  action_shape: tuple,
                  latent_dim: int,
                  layers_dim: List[int] = [256]):
-        super(SPRDecoder, self).__init__(latent_dim, latent_dim)
-        layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, False, True)
-        self.code = nn.Sequential(*layers)
+        super(SPRDecoder, self).__init__(
+            latent_dim=latent_dim,
+            output_dim=latent_dim,
+            action_shape=action_shape,
+            layers_dim=layers_dim
+        )
         self.projection = nn.Linear(latent_dim, latent_dim)
 
+    def _instance_model(self, args: DecoderArguments):
+        layers = create_mlp(args.latent_dim + args.action_shape[-1],
+                            args.latent_dim, args.layers_dim,
+                            nn.LeakyReLU, True, True)
+        return nn.Sequential(*layers)
+
     def transition(self, z, action):
-        h_fc = self.code(th.cat([z, action], dim=1))
-        return th.tanh(h_fc)
+        return super().forward(z, action)
 
     def predict(self, z_prj):
         h_fc = self.projection(z_prj)
@@ -72,42 +127,61 @@ class SimpleSPRDecoder(BaseDecoder):
     """SimpleSPRDecoder as representation learning function."""
 
     def __init__(self,
-                 action_shape: tuple,
-                 latent_dim: int,
-                 layers_dim: List[int] = [256]):
-        super(SimpleSPRDecoder, self).__init__(latent_dim, latent_dim)
-        code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
-        code_layers.insert(-1, nn.LayerNorm(latent_dim))
-        self.transition = nn.Sequential(*code_layers)
-        proj_layers = create_mlp(latent_dim, latent_dim, layers_dim, nn.LeakyReLU, True, True)
-        self.projection = nn.Sequential(*proj_layers)
-        self.action_dim = action_shape[-1]
+                 state_shape: tuple | int,
+                 latent_dim: tuple | int,
+                 action_shape: Optional[tuple | int] = None,
+                 layers_dim: List[int] = [256],
+                 auto_setup: bool = True):
         self.hot_encode_action = False
+        super(SimpleSPRDecoder, self).__init__(
+            latent_dim=latent_dim,
+            output_dim=latent_dim,
+            action_shape=action_shape,
+            layers_dim=layers_dim
+        )
+        if auto_setup:
+            proj_dim = sum(latent_dim) if self.multi_input else latent_dim
+            self.projection = self._instance_projection(
+                proj_dim, proj_dim, layers_dim)
 
-    def forward_z_hat(self, z, action):
+    def _instance_model(self, args: DecoderArguments):
+        code_layers = create_mlp(args.latent_dim + args.action_shape[-1],
+                                 args.latent_dim, args.layers_dim,
+                                 nn.LeakyReLU, True, True)
+        code_layers.insert(-1, nn.LayerNorm(args.latent_dim))
+        return nn.Sequential(*code_layers)
+
+    def _instance_projection(self, input_dim: int,
+                             output_dim: int,
+                             layers_dim: List[int] = [256]):
+        proj_layers = create_mlp(input_dim, output_dim, layers_dim,
+                                 nn.LeakyReLU, True, True)
+        return nn.Sequential(*proj_layers)
+
+    def preprocess_action(self, action):
         if self.hot_encode_action:
-            hot_action = th.zeros((action.shape[0], self.action_dim))
-            if z.get_device() >= 0:
-                hot_action = hot_action.to(device=z.get_device())
+            hot_action = th.zeros((action.shape[0], self.action_shape[-1]))
             hot_action[th.arange(hot_action.size(0)).unsqueeze(1), action] = 1
-            action = hot_action
+            return hot_action.to(device=action.device)
 
-        return self.transition(th.cat([z, action], dim=1))
+        return action
 
-    def forward_proj(self, code):
-        return self.projection(code)
+    def forward_transition(self, z, action):
+        return super().forward(z, self.preprocess_action(action))
 
     def forward(self, z, action):
-        code = self.forward_z_hat(z, action)
-        proj = self.forward_proj(code)
-        return proj
+        z = self.forward_transition(z, action)
+        return self.projection(z)
 
 
 class PixelDecoder(BaseDecoder):
     def __init__(self, state_shape: tuple,
                  latent_dim: int,
                  layers_filter: List[int] = [32, 32]):
-        super(PixelDecoder, self).__init__(latent_dim, PixelEncoder.OUT_DIM[self.num_layers])
+        super(PixelDecoder, self).__init__(
+            state_shape=state_shape,
+            latent_dim=PixelEncoder.OUT_DIM[self.num_layers],
+            auto_setup=False)
         self.num_layers = len(layers_filter)
         self.num_filters = layers_filter[0]
 
@@ -135,86 +209,3 @@ class PixelDecoder(BaseDecoder):
         obs = self.deconvs[-1](deconv)
 
         return obs
-
-
-class ProprioceptiveSPRDecoder(BaseDecoder):
-    """ProprioceptiveSPRDecoder as representation learning function."""
-
-    def __init__(self,
-                 action_shape: tuple,
-                 latent_dim: int,
-                 layers_dim: List[int] = [256],
-                 with_fusion: bool = False):
-        super(ProprioceptiveSPRDecoder, self).__init__(latent_dim, latent_dim)
-        code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
-        code_layers.insert(-1, nn.LayerNorm(latent_dim))
-        self.proprio_trans = nn.Sequential(*code_layers)
-        out_latent = latent_dim
-        self.dual_transition = not with_fusion
-        if self.dual_transition: # no fusion performed
-            code_layers = create_mlp(latent_dim + action_shape[-1], latent_dim, layers_dim, nn.LeakyReLU, True, True)
-            code_layers.insert(-1, nn.LayerNorm(latent_dim))
-            self.extero_trans = nn.Sequential(*code_layers)
-            out_latent = 2 * latent_dim
-            self.output_dim = out_latent
-        proj_layers = create_mlp(out_latent, out_latent, layers_dim, nn.LeakyReLU, True, True)
-        self.projection = nn.Sequential(*proj_layers)
-
-    def forward_z_hat(self, z, action):
-        if self.dual_transition:
-            proprio_z, extero_z = z.chunk(2, dim=1)
-            proprio_z_hat = self.proprio_trans(th.cat([proprio_z, action], dim=1))
-            extero_z_hat = self.extero_trans(th.cat([extero_z, action], dim=1))
-            return proprio_z_hat, extero_z_hat
-        else:
-            return self.proprio_trans(th.cat([z, action], dim=1))
-
-    def forward_proj(self, code):
-        if isinstance(code, tuple):
-            code = th.cat(code, dim=1)
-        return self.projection(code)
-
-    def forward(self, z, action):
-        code = self.forward_z_hat(z, action)
-        proj = self.forward_proj(code)
-        return proj
-
-
-class GuidedSPRDecoder(SimpleSPRDecoder):
-    """SimpleSPRDecoder as representation learning function."""
-    def __init__(self,
-                 action_shape: tuple,
-                 latent_dim: int,
-                 layers_dim: List[int] = [256],
-                 pixel_dim: Optional[int] = None):
-        super(GuidedSPRDecoder, self).__init__(action_shape, latent_dim, layers_dim)
-        self.latent_dim = latent_dim
-        self.pixel_dim = pixel_dim
-        # Linear acceleration belief
-        layers = create_mlp(latent_dim, 3,
-                            layers_dim, nn.LeakyReLU, False, True)
-        self.accel_proj = nn.Sequential(*layers)
-        # Home distance, orientation, and elevation diff belief
-        layers = create_mlp(latent_dim, 3,
-                            layers_dim, nn.LeakyReLU, False, True)
-        self.home_proj = nn.Sequential(*layers)
-        # UAV pose belief
-        if pixel_dim is not None:
-            layers = create_mlp(pixel_dim, 7,
-                                layers_dim, nn.LeakyReLU, False, True)
-            self.pose_proj = nn.Sequential(*layers)
-
-    def forward(self, z, action):
-        # forward transition
-        z1_hat = self.forward_z_hat(z, action)
-        # forward aux projections
-        # expects z_stack with shape (B, proprio_dim+extero_dim(+pixel_dim)*)
-        z1_proprio_hat, z1_extero_hat = z1_hat[:, :self.latent_dim * 2].chunk(2, dim=1)# values inference
-        accel = self.accel_proj(z1_proprio_hat)
-        home = self.home_proj(z1_extero_hat)
-        pose = None
-        if self.pixel_dim is not None:
-            pose = self.pose_proj(z1_hat[:, -self.pixel_dim:])  # pose inference
-        # forward latent projection
-        z1_hat = self.forward_proj(z1_hat)
-        return z1_hat, (accel, home, pose)

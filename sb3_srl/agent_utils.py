@@ -131,6 +131,10 @@ def parse_srl_args(parser):
                          help='Scalar factor for entropy scale of next-state distribution.')
     arg_srl.add_argument("--feat-lat-prop", type=str, default=None,
                          help='Proportion for the feature and latent dimension size relative to observation.')
+
+    arg_srl.add_argument("--use-mamba-dec", action='store_true',
+                         help='Use Mamba model on the decoder function, after transition.')
+
     return arg_srl
 
 
@@ -173,7 +177,6 @@ def args2encoder(args, env_params):
     params = {
         'state_shape': env_params['state_shape'],
         'feature_dim': _args.get('feature_dim', 32),
-        'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
     }
 
@@ -212,8 +215,10 @@ def args2decoder(args, env_params):
         _args = vars(_args)
     params = {
         'state_shape': env_params['state_shape'],
+        'action_shape': env_params['action_shape'],
         'latent_dim': _args.get('latent_dim', 32),
         'layers_dim': [_args.get('hidden_dim', 256)] * _args.get('num_layers', 2),
+        'use_mamba': _args.get('use_mamba_dec', False)
     }
 
     update_dimensions(_args.get('feat_lat_propr'), params, env_params['state_shape'][-1])
@@ -221,24 +226,17 @@ def args2decoder(args, env_params):
     decoder = 'Vector'
 
     if _args.get('model_proprio', False):
-        decoder = 'ProprioceptiveSPR'
-        params['action_shape'] = env_params['action_shape']
-        params['with_fusion'] = False
-        del params['state_shape']
+        decoder = 'SimpleSPR'
 
     elif _args.get('model_spr', False):
         decoder = 'SPR'
         if _args.get('is_pixels', False):
             params['layers_dim'] = [params['layers_dim'][-1]] * (len(params['layers_dim']) - 1)
-        params['action_shape'] = env_params['action_shape']
-        del params['state_shape']
 
     elif _args.get('model_ispr', False):
         decoder = 'SimpleSPR'
         if _args.get('is_pixels', False):
             params['layers_dim'] = [params['layers_dim'][-1]] * (len(params['layers_dim']) - 1)
-        params['action_shape'] = env_params['action_shape']
-        del params['state_shape']
 
     elif _args.get('is_pixels', False):
         decoder = 'Pixel'
@@ -254,7 +252,10 @@ def args2pipeline(args, env_params):
         _args = vars(_args)
 
     rep_function = "R:"
-    rep_params = {'latent_dim': _args.get('latent_dim', 32)}
+    rep_params = {
+        'latent_dim': _args.get('latent_dim', 32),
+        'feature_dim': _args.get('feature_dim', 32),
+    }
     update_dimensions(_args.get('feat_lat_propr'), rep_params, env_params['state_shape'][-1])
 
     if not _args.get('use_stochastic', False):
@@ -270,7 +271,7 @@ def args2pipeline(args, env_params):
             rep_head = "NormalizedBounded"
         if _args.get('dist_bound_logvar', False):
             rep_head = "LogVarBounded"
-        if _args.get('dist_bound_logvar-norm', False):
+        if _args.get('dist_bound_logvar_norm', False):
             rep_head = "NormalizedLogVarBounded"
 
     rep_params['rep_head'] = rep_head
@@ -430,8 +431,10 @@ def args2logpath(args, algo, env_name=None):
 
     # feature dim
     if args.feat_lat_prop is None:
-        path_suffix += f'-feat{args.feature_dim}'
-        path_suffix += f'-ltn{args.latent_dim}'
+        if args.feature_dim != 32:
+            path_suffix += f'-feat{args.feature_dim}'
+        if args.latent_dim != 32:
+            path_suffix += f'-ltn{args.latent_dim}'
     else:
         path_suffix += f'-feat:ltn-{args.feat_lat_prop}'
 
@@ -453,7 +456,7 @@ def args2logpath(args, algo, env_name=None):
             entropy_suffix = f"eb{args.entropy_beta:.0e}".replace('-', '')
             path_suffix += f"-{entropy_suffix}"
 
-    else:
+    elif args.is_srl:
         path_suffix += '-rdet'
 
     fusion_suffix = ''
@@ -478,6 +481,10 @@ def args2logpath(args, algo, env_name=None):
 
     if args.pipeline_branch:
         pipeline_suffix += '-late'
+
+    # mamba variants
+    if args.use_mamba_dec:
+        path_suffix += '-mmbdec'
 
     exp_name = f"{algo}{path_suffix}{pipeline_suffix}"
 

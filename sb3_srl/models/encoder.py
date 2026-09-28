@@ -7,69 +7,92 @@ Created on Mon Aug 24 21:59:56 2026
 """
 from typing import List, Optional
 
+from dataclasses import dataclass
 from stable_baselines3.common.torch_layers import create_mlp
 import torch as th
 from torch import nn
 
 from .base import BaseFunction
+from .base import FunctionArguments
+
+
+@dataclass
+class EncoderArguments(FunctionArguments):
+    state_shape: tuple
+
+    @property
+    def feature_dim(self) -> int | tuple[int, ...]:
+        return self.output_dim
 
 
 class BaseEncoder(BaseFunction):
     def __init__(self,
                  state_shape: tuple,
+                 input_dim: int | tuple[int, ...],
                  feature_dim: int | tuple[int, ...],
-                 latent_dim: int | tuple[int, ...]):
-        super(BaseEncoder, self).__init__(state_shape, latent_dim, False)
-        self.feature_dim = feature_dim
+                 layers_dim: List[int] = [256, 256],
+                 auto_setup: bool = True):
+        self.state_shape = state_shape
+        self.layers_dim = layers_dim
+        super(BaseEncoder, self).__init__(input_dim, feature_dim, auto_setup)
 
     @property
-    def latent_dim(self) -> int | tuple[int, ...]:
+    def feature_dim(self) -> int | tuple[int, ...]:
         return self.output_dim
 
-    def forward_feats(self, observation):
-        raise NotImplementedError
-
-    def forward(self, observation):
-        return self.forward_feats(observation)
+    def _function_args(self, input_dim, output_dim):
+        return EncoderArguments(
+            input_dim=input_dim,
+            state_shape=self.state_shape,
+            output_dim=output_dim,
+            layers_dim=self.layers_dim
+        )
 
 
 class VectorEncoder(BaseEncoder):
     def __init__(self,
                  state_shape: tuple,
-                 feature_dim: int,
-                 latent_dim: int,
-                 layers_dim: List[int] = [256, 256]):
-        super(VectorEncoder, self).__init__(state_shape, feature_dim, latent_dim)
-        feats = create_mlp(state_shape[-1], feature_dim, layers_dim,
-                            nn.LeakyReLU, False, True)
-        if len(state_shape) == 2:
-            feats[0] = nn.Conv1d(state_shape[0], layers_dim[0],
-                                  kernel_size=state_shape[-1])
+                 feature_dim: int | tuple[int, ...],
+                 layers_dim: List[int] = [256, 256],
+                 auto_setup: bool = True):
+        in_dim = state_shape[-1] if isinstance(state_shape, tuple) else state_shape
+        super(VectorEncoder, self).__init__(
+            state_shape=state_shape,
+            input_dim=in_dim,
+            feature_dim=feature_dim,
+            layers_dim=layers_dim
+        )
+
+    def _instance_model(self, args: EncoderArguments):
+        feats = create_mlp(args.input_dim, args.feature_dim,
+                           args.layers_dim, nn.LeakyReLU, False, True)
+        if isinstance(args.input_dim, tuple) and len(args.input_dim) == 2:
+            feats[0] = nn.Conv1d(args.input_dim[0], args.layers_dim[0],
+                                  kernel_size=args.input_dim[-1])
             feats.insert(1, nn.Flatten(start_dim=1))
-        self.feats_model = nn.Sequential(*feats)
-
-        head = [nn.LeakyReLU(), nn.Linear(feature_dim, latent_dim, bias=True)]
-        self.head_model = nn.Sequential(*head)
-
-    def forward_feats(self, obs):
-        feats = self.feats_model(obs)
-        return self.head_model(feats)
+        return nn.Sequential(*feats)
 
 
 class SimpleSPREncoder(VectorEncoder):
     def __init__(self,
                  state_shape: tuple,
                  feature_dim: int,
-                 latent_dim: int,
                  hidden_dim: int,
                  out_act: nn.Module = nn.Tanh()):
-        super(SimpleSPREncoder, self).__init__(state_shape, feature_dim, latent_dim)
-        self.head_model = nn.Sequential(
-            nn.Linear(feature_dim, hidden_dim),
+        self.activation = out_act
+        super(SimpleSPREncoder, self).__init__(
+            state_shape=state_shape,
+            input_dim=state_shape[-1],
+            feature_dim=feature_dim)
+
+    def _instance_model(self, args: EncoderArguments):
+        head = [
+            nn.Linear(args.feature_dim, args.hidden_dim),
             nn.LeakyReLU(),
-            nn.Linear(hidden_dim, latent_dim),
-            out_act
-        )
+            nn.Linear(args.hidden_dim, args.feature_dim),
+            self.activation
+        ]
+        return nn.Sequential(super()._instance_model(args), *head)
 
 
 class NatureCNNEncoder(BaseEncoder):
@@ -81,12 +104,14 @@ class NatureCNNEncoder(BaseEncoder):
         self,
         state_shape: tuple,
         feature_dim: int = 512,
-        latent_dim: int = 256,
         normalized_image: bool = False) -> None:
-        super(NatureCNNEncoder, self).__init__(state_shape, feature_dim, latent_dim)
+        super(NatureCNNEncoder, self).__init__(
+            state_shape=state_shape,
+            input_dim=state_shape,
+            feature_dim=feature_dim,
+            auto_setup=False)
         # We assume CxHxW images (channels first)
         n_input_channels = state_shape[0]
-        # self.features_dim = features_dim
         self.feats_model = nn.Sequential(
             nn.Conv2d(n_input_channels, 32, kernel_size=8, stride=4, padding=0),
             nn.LeakyReLU(),
@@ -98,18 +123,12 @@ class NatureCNNEncoder(BaseEncoder):
             nn.Linear(3136, feature_dim)
         )
         self.normalized_image = normalized_image
-        self.head_model = nn.Sequential(nn.LeakyReLU(),
-                                        nn.Linear(feature_dim, latent_dim),
-                                        nn.LeakyReLU(),
-                                        nn.Linear(latent_dim, latent_dim),
-                                        nn.LayerNorm(latent_dim),
-                                        nn.Tanh())
 
-    def forward_feats(self, observations: th.Tensor) -> th.Tensor:
+    def forward(self, observations: th.Tensor) -> th.Tensor:
         if not self.normalized_image:
             observations = observations.float() / 255.
         feats = self.feats_model(observations.float())
-        return self.head_model(feats)
+        return feats
 
 
 class PixelEncoder(BaseEncoder):
@@ -119,9 +138,12 @@ class PixelEncoder(BaseEncoder):
     def __init__(self,
                  state_shape: tuple,
                  feature_dim: int,
-                 latent_dim: int,
                  layers_filter: List[int] = [32, 32]):
-        super(PixelEncoder, self).__init__(state_shape, feature_dim, latent_dim)
+        super(PixelEncoder, self).__init__(
+            state_shape=state_shape,
+            input_dim=state_shape,
+            feature_dim=feature_dim,
+            auto_setup=False)
         assert len(state_shape) == 3
         num_layers = len(layers_filter)
         feats_layers = [nn.Conv2d(state_shape[0], layers_filter[0], 3, stride=2)]
@@ -135,22 +157,20 @@ class PixelEncoder(BaseEncoder):
         self.feature_dim = (layers_filter[-1], out_dim, out_dim)
         head_layers = [
             nn.LeakyRelu(),
-            nn.Linear(layers_filter[-1] * out_dim * out_dim, latent_dim),
-            nn.LayerNorm(latent_dim),
-            nn.Tanh
+            nn.Linear(layers_filter[-1] * out_dim * out_dim, feature_dim),
+            nn.Linear(feature_dim, feature_dim),
             ]
         self.head_model = nn.Sequential(*head_layers)
 
-    def forward_feats(self, obs):
+    def forward(self, obs):
         feats = self.feats_model(obs.float() / 255.)
         return self.head_model(feats.view(feats.size(0), -1))
 
 
-class AdPuEncoder(BaseEncoder):
+class AdPuEncoder(VectorEncoder):
     def __init__(self,
                  state_shape: tuple,
                  feature_dim: int,
-                 latent_dim: int,
                  layers_dim: List[int] = [256, 256],
                  prop_mask: list[bool] = [True, True, True, True, True, True,  # imu, gyro
                                           False, False, False, False, False, False,  # gps_pos, gps_vel
@@ -159,27 +179,41 @@ class AdPuEncoder(BaseEncoder):
                  pixel_shape: Optional[tuple] = None,
                  pixel_dim: Optional[int] = None):
         assert state_shape[-1] == len(prop_mask), f"Invalid proprioceptive mask's, length ({len(prop_mask)}) != observation length ({state_shape[-1]})."
-        super(AdPuEncoder, self).__init__(state_shape, feature_dim, latent_dim)
-        proprio_input = sum(prop_mask)  # = 3 imu + 3 gyro + 4 motors
-        extero_input = len(prop_mask) - proprio_input
         self.prop_mask = prop_mask
         self.exte_mask = [not m for m in self.prop_mask]
+        self.pixel_shape = pixel_shape
         self.pixel_dim = pixel_dim
+        proprio_input = sum(self.prop_mask)  # = 3 imu + 3 gyro + 4 motors
+        extero_input = len(self.prop_mask) - proprio_input
+        # split observation into proprioceptive and exteroceptive
+        input_shape = (proprio_input, extero_input)
+        output_shape = (feature_dim, feature_dim)
 
+        # super(AdPuEncoder, self).__init__(
+        BaseEncoder.__init__(self,
+            state_shape=state_shape,
+            input_dim=input_shape,
+            feature_dim=output_shape,
+            layers_dim=layers_dim,
+            auto_setup=True)
+
+    def instance_models(self):
+        assert self.multi_input and self.multi_output
         # Proprioceptive observation
-        self.proprio = VectorEncoder((proprio_input, ), feature_dim, latent_dim, layers_dim)
+        proprio = self._instance_model(
+            self._function_args(self.input_dim[0], self.feature_dim[0]))
         # Exteroceptive observation
-        self.extero = VectorEncoder((extero_input, ), feature_dim, latent_dim, layers_dim)
+        extero = self._instance_model(
+            self._function_args(self.input_dim[1], self.feature_dim[1]))
+        return nn.ModuleList([proprio, extero]), 2
 
-        output_dim = (self.proprio.latent_dim, self.extero.latent_dim)
-        # Pixel-based observation
-        is_pixel = pixel_shape is not None
-        if is_pixel:
-            if self.pixel_dim is None:
-                self.pixel_dim = latent_dim
-            self.pixel = NatureCNNEncoder(pixel_shape, feature_dim, latent_dim=self.pixel_dim)
-            output_dim = output_dim + (self.pixel_dim, )
-        self.output_dim = output_dim
+    @property
+    def proprio(self) -> nn.Module:
+        return self.models[0]
+
+    @property
+    def extero(self) -> nn.Module:
+        return self.models[1]
 
     def prop_observation(self, observation):
         if isinstance(observation, dict):
@@ -201,13 +235,9 @@ class AdPuEncoder(BaseEncoder):
                 observation[:, [not m for m in prop_mask]])
 
     def split_observation(self, observation):
-        # expecting (IMU, Gyro, GPS, Vel, TargetSensors, Motors) order
         return self.prop_observation(observation), self.exte_observation(observation)
 
-    # def forward_quaternion(self, euler):
-    #     return matrix_to_quaternion(euler_angles_to_matrix(euler, convention='XYZ'))
-
-    def forward_feats(self, obs):
+    def forward(self, obs):
         # forward features
         obs_prop, obs_exte = self.split_observation(obs)
         feats_proprio = self.proprio(obs_prop)
