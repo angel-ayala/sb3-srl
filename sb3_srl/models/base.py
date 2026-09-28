@@ -32,8 +32,17 @@ class BaseFunction(nn.Module):
                  output_dim: int | tuple[int, ...],
                  auto_setup: bool = False):
         super().__init__()
+        if isinstance(input_dim, list):
+            input_dim = tuple(input_dim)
+        if isinstance(output_dim, list):
+            output_dim = tuple(output_dim)
+
         self.input_dim = input_dim
         self.output_dim = output_dim
+
+        if isinstance(input_dim, tuple) and len(input_dim) == 1:
+            self.input_dim = input_dim[-1]
+
         if auto_setup:
             self.models, self.n_models = self.instance_models()
 
