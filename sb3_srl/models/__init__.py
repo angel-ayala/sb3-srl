@@ -23,6 +23,7 @@ from .decoder import (
     SimpleSPRDecoder
 )
 from .fusion import (
+    BaseFusion,
     FusionMLP,
     FusionConv1d,
     FusionGated,
@@ -30,6 +31,7 @@ from .fusion import (
     CrossAttention
 )
 from .wrappers import (
+    BaseWrapper,
     StochasticWrapper,
     MambaWrapper
 )
@@ -88,7 +90,7 @@ def create_decoder(name: str, params: dict) -> BaseDecoder:
     return decoder_class(**params)
 
 
-def create_fusion_model(model_name: str, params: dict) -> BaseFunction:
+def create_fusion_model(model_name: str, params: dict) -> BaseFusion:
     try:
         fusion_class = FUSION[model_name]
     except KeyError:
@@ -98,7 +100,7 @@ def create_fusion_model(model_name: str, params: dict) -> BaseFunction:
         )
     return fusion_class(**params)
 
-def create_wrapper(model_name: str, params: dict) -> BaseFunction:
+def create_wrapper(model_name: str, params: dict) -> BaseWrapper:
     try:
         wrapper_class = WRAPPERS[model_name]
     except KeyError:
