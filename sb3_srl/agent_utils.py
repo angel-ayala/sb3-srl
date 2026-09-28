@@ -134,7 +134,7 @@ def parse_srl_args(parser):
 
     arg_srl.add_argument("--use-mamba-dec", action='store_true',
                          help='Use Mamba model on the decoder function, after transition.')
-    
+
     return arg_srl
 
 
@@ -431,8 +431,10 @@ def args2logpath(args, algo, env_name=None):
 
     # feature dim
     if args.feat_lat_prop is None:
-        path_suffix += f'-feat{args.feature_dim}'
-        path_suffix += f'-ltn{args.latent_dim}'
+        if args.feature_dim != 32:
+            path_suffix += f'-feat{args.feature_dim}'
+        if args.latent_dim != 32:
+            path_suffix += f'-ltn{args.latent_dim}'
     else:
         path_suffix += f'-feat:ltn-{args.feat_lat_prop}'
 
@@ -479,6 +481,10 @@ def args2logpath(args, algo, env_name=None):
 
     if args.pipeline_branch:
         pipeline_suffix += '-late'
+
+    # mamba variants
+    if args.use_mamba_dec:
+        path_suffix += '-mmbdec'
 
     exp_name = f"{algo}{path_suffix}{pipeline_suffix}"
 
