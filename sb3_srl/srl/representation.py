@@ -351,13 +351,36 @@ class RepresentationModel:
         else:
             self._log_fn.record(tag, value)
 
+    def _check_collapse(self, z_batch, metrics):
+        # Center the batch
+        z = z_batch - z_batch.mean(dim=0, keepdim=True)
+        # Compute SVD
+        s = th.linalg.svdvals(z)        
+        s_max = s[0]
+        s_min = s[-1]
+        # Rank (count non-negligible singular values)
+        metrics["rank-3"] = (s > 1e-3 * s_max).sum().item()
+        metrics["rank-2"] = (s > 1e-2 * s_max).sum().item()
+        metrics["rank-1"] = (s > 1e-1 * s_max).sum().item()
+        # Condition number (spread)
+        metrics["cond"] = (s_max / s_min).item()
+        # Effective rank (entropy-based, normalized)
+        p = s / s.sum()
+        metrics["rank-effective"] = th.exp(
+            -(p * th.log(p + 1e-12)).sum()
+        ).item()
+
     def log_mi(self, observation_z, q_min):
         # Mutual Information to assess latent features' impact
         if isinstance(observation_z, dict):
             observation_z = observation_z['pixel']
         mi = self.loss.compute_mi(observation_z, q_min)
         self.log("mutual_information_zq", mi.mean())
-        return mi
+        # Log ranks for collapse
+        metrics = {}
+        self._check_collapse(observation_z, metrics)
+        for k, v in metrics.items():
+            self.log("svd/" + k, v)
 
     # ------------------------------------------------------------------
     # Target model / EMA update
@@ -426,7 +449,9 @@ class RepresentationModel:
             return self.decoder(obs_z)
 
     def __repr__(self):
-        out_str = f"{self.type}Model:\n"
+        out_str = f"{self.type}Model("
+        out_str += f'is_stochastic={self.is_stochastic}, '
+        out_str += f'entropy_beta={self.entropy_beta})\n'
         out_str += str(self.encoder)
         out_str += '\n'
         out_str += str(self.pipeline)
@@ -434,8 +459,6 @@ class RepresentationModel:
         out_str += str(self.decoder)
         out_str += '\n'
         out_str += str(self.loss)
-        out_str += f'\nis_stochastic={self.is_stochastic},'
-        out_str += f'\nentropy_beta={self.entropy_beta},'
         return out_str
 
 
